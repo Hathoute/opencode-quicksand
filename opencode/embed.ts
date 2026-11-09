@@ -1,9 +1,10 @@
-import { Context, Effect, Stream } from "effect"
+import { Context, Effect, Layer, Stream } from "effect"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import path from "path"
 import { EmbeddedHost } from "../packages/sdk/src/internal/host"
 import { Bus } from "../packages/core/src/bus"
 import { Workspace } from "../packages/core/src/workspace"
+import { RipgrepBinary } from "../packages/core/src/ripgrep/binary"
 import type { Agent } from "../packages/schema/src/agent"
 import type { Model } from "../packages/schema/src/model"
 import type { Permission } from "../packages/schema/src/permission"
@@ -95,16 +96,25 @@ const workspaceID = Workspace.ID.make("wrk_quicksand_ssh")
 
 const program = Effect.gen(function* () {
   const host = yield* Effect.acquireRelease(
-    EmbeddedHost.create({
-      workspaceProviders: { ssh: sshWorkspaceDriver(sshTarget, pathMap) },
-      config: { directory: configDir },
-      database: { path: databaseFile },
-    }),
+    EmbeddedHost.create(
+      {
+        workspaceProviders: { ssh: sshWorkspaceDriver(sshTarget, pathMap) },
+        config: { directory: configDir },
+        database: { path: databaseFile },
+      },
+      {
+        overrides: [
+          RipgrepBinary.node.replace(
+            Layer.succeed(RipgrepBinary.Service, RipgrepBinary.Service.of({ filepath: Effect.succeed("rg") })),
+          ),
+        ],
+      },
+    ),
     (host) => Effect.promise(host.close),
   )
   // SDK plugins activate after OpenCode's built-ins, so registering the same
   // effective tool name replaces session_move without patching the checkout.
-  yield* host.plugins.register(sessionMovePlugin(host.sessions))
+  yield* host.plugins.register(sessionMovePlugin(host.sessions, pathMap))
   // Sessions must be BORN in the ssh workspace. Post-create moves only land
   // at a "safe inbox boundary", so a session's first turn can race the move
   // and run host-local (observed: `uname -r` returning the Windows host's

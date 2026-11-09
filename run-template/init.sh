@@ -8,7 +8,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   maven \
   nodejs \
   npm \
-  nftables
+  nftables \
+  ripgrep
 
 mkdir -p /run/sshd /etc/ssh/sshd_config.d /root/.ssh
 printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/99-demo.conf
