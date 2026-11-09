@@ -2,7 +2,7 @@
 - derives a persistent image name from sandbox.initScript's SHA-256
 - --init creates that image from Ubuntu when it does not already exist
 - NetworkMode.FULL (internet access)
-- mounts sandbox.mountDir at /data in the VM
+- mounts the launcher's current working directory at /data in the VM
 - guest SSH (22) exposed on host 127.0.0.1:2222
 - generates ./ssh/quicksand_demo next to the script (next to the exe when
   frozen) and injects the pubkey into the VM so opencode's ssh driver can
@@ -43,14 +43,14 @@ def _load_config(file: Path) -> tuple[Path, Path]:
     try:
         sandbox = config["sandbox"]
         init_script = sandbox["initScript"]
-        mount_dir = sandbox["mountDir"]
+        cache_dir = sandbox["cacheDir"]
     except (KeyError, TypeError) as error:
         raise ValueError(f"invalid sandbox config in {file}: {error}") from error
     if not isinstance(init_script, str) or not init_script.strip():
         raise ValueError("sandbox.initScript must be a non-empty string")
-    if not isinstance(mount_dir, str) or not mount_dir.strip():
-        raise ValueError("sandbox.mountDir must be a non-empty string")
-    return _resolve(file.parent, init_script), _resolve(file.parent, mount_dir)
+    if not isinstance(cache_dir, str) or not cache_dir.strip():
+        raise ValueError("sandbox.cacheDir must be a non-empty string")
+    return _resolve(file.parent, init_script), _resolve(file.parent, cache_dir)
 
 
 def _resolve(base: Path, value: str) -> Path:
@@ -163,14 +163,15 @@ def patch_frozen_qemu():
 
 ARGS = _arguments()
 CONFIG_FILE = Path(ARGS.config).expanduser().resolve()
-INIT_SCRIPT, MOUNT_DIR = _load_config(CONFIG_FILE)
+INIT_SCRIPT, CACHE_DIR = _load_config(CONFIG_FILE)
+MOUNT_DIR = Path.cwd().resolve()
 INIT_SCRIPT = _validate_init_script(INIT_SCRIPT)
 INIT_MOUNT_DIR = INIT_SCRIPT.parent / "init"
 if not INIT_MOUNT_DIR.is_dir():
     raise FileNotFoundError(f"sandbox init mount does not exist or is not a directory: {INIT_MOUNT_DIR}")
 KEY_PATH = _script_dir() / "ssh" / "quicksand_demo"
 IMAGE_NAME = f"ubuntu-{hashlib.sha256(INIT_SCRIPT.read_bytes()).hexdigest()}"
-IMAGE_PATH = Path.cwd() / ".quicksand" / "sandboxes" / IMAGE_NAME
+IMAGE_PATH = CACHE_DIR / IMAGE_NAME
 patch_frozen_qemu()
 
 
@@ -211,7 +212,7 @@ async def init_image():
         )
         if result.exit_code != 0:
             raise RuntimeError(f"sandbox.initScript failed with exit code {result.exit_code}")
-        await sb.save(IMAGE_NAME)
+        await sb.save(IMAGE_NAME, workspace=CACHE_DIR)
     print(f"Sandbox image saved: {IMAGE_NAME}")
 
 
@@ -221,7 +222,7 @@ async def main():
     print(f"Sandbox image: {IMAGE_NAME}")
 
     async with Sandbox(
-        image=IMAGE_NAME,
+        image=str(IMAGE_PATH),
         network_mode=NetworkMode.FULL,
         mounts=[Mount(str(MOUNT_DIR), "/data")],
         port_forwards=[Forward(Host(2222), Guest(22))],

@@ -4,7 +4,7 @@
 import { existsSync, statSync } from "node:fs"
 import path from "path"
 import { PROJECT_ROOT } from "./common"
-import { config } from "./config"
+import { CONFIG_FILE, config } from "./config"
 
 const initScript = config.sandbox.initScript
 if (!existsSync(initScript) || !statSync(initScript).isFile())
@@ -95,7 +95,7 @@ async function run() {
 }
 
 function startInitSandbox() {
-  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "init-sandbox.ts")], {
+  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "init-sandbox.ts"), "--config", CONFIG_FILE], {
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",
@@ -105,7 +105,7 @@ function startInitSandbox() {
 }
 
 function startSandbox() {
-  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "start-sandbox.ts")], {
+  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "start-sandbox.ts"), "--config", CONFIG_FILE], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -115,7 +115,7 @@ function startSandbox() {
 }
 
 function startEmbed() {
-  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "start-embed.ts")], {
+  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "start-embed.ts"), "--config", CONFIG_FILE], {
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",

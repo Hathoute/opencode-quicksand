@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$BIN_DIR/.." && pwd)"
+STATE_DIR="$HOME/.opencode-quicksand"
+CONFIG_FILE="$STATE_DIR/config.jsonc"
+RUN_DIR="$STATE_DIR/run"
+
+if [[ -f "$HOME/.local/bin/env" ]]; then
+  # uv's default installer writes this PATH setup file.
+  source "$HOME/.local/bin/env"
+fi
+
+mkdir -p "$STATE_DIR"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  cp "$REPO_ROOT/config.jsonc" "$CONFIG_FILE"
+  echo "Created $CONFIG_FILE"
+fi
+if [[ ! -d "$RUN_DIR" ]]; then
+  mkdir -p "$RUN_DIR"
+  cp -R "$REPO_ROOT/run-template/." "$RUN_DIR/"
+  echo "Created $RUN_DIR from run-template"
+fi
+
+export NODE_USE_SYSTEM_CA=1
+export UV_SYSTEM_CERTS=true
+exec bun "$REPO_ROOT/build/start-opencode.ts" --config "$CONFIG_FILE"

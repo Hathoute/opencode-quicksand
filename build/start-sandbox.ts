@@ -16,8 +16,8 @@ ensureUv()
 // uv-created environments ship without it). --frozen refuses lockfile drift.
 await $`uv sync --frozen`.cwd(PROJECT_ROOT)
 
-// --project selects the environment without changing the child cwd; Quicksand
-// stores its named image saves under this project's .quicksand directory.
+// --project selects the environment without changing the child cwd: that cwd
+// is mounted at /data, while sandbox.cacheDir controls named image storage.
 const proc = Bun.spawn(
   [
     "uv",

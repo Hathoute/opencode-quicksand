@@ -10,6 +10,7 @@ session, config discovery, and the mounted `data/` directory stay on the host.
 | Path | Purpose |
 |------|---------|
 | `config.jsonc` | runtime paths, OpenCode checkout tag/port, and sandbox initialization settings |
+| `bin/run_opencode` | PATH-friendly launcher; bootstraps per-user state and mounts the current directory |
 | `run-template/` | tracked template for the ignored runtime `run/` directory |
 | `opencode/` | opencode poc TypeScript sources: SSH workspace driver (`driver.ts` + per-platform adapters), embedder (`embed.ts`), streaming test (`stream-test.ts`) |
 | `quicksand/` | VM launcher, default `init.sh`, and runtime SSH keys |
@@ -32,9 +33,24 @@ session, config discovery, and the mounted `data/` directory stay on the host.
 - `config.jsonc` pointing to an OpenCode config directory, writable cache
   directory, and sandbox init script; the OpenCode `opencode.jsonc` should set
   `"shell": "bash"` for the guest
-- a runtime directory copied from the tracked template: `cp -R run-template run`
+- a runtime directory; `run_opencode` creates it automatically, while direct
+  repository scripts use `cp -R run-template run` once
 
-## Quickstart (three terminals)
+## Quickstart
+
+With this repository's `bin/` on `PATH`, launch from the directory that should
+be mounted at `/data`:
+
+```bash
+cd /path/to/your/workspace
+run_opencode
+```
+
+On first use the launcher copies `config.jsonc` and `run-template/` to
+`~/.opencode-quicksand/`. It then initializes the image, starts the sandbox,
+and starts the embedder. CTRL+C stops the embedder before closing the sandbox.
+
+The individual repository scripts remain available for development:
 
 Run steps 1 and 2 together with `bun run start:opencode`. It creates the
 content-addressed sandbox image when needed. Pressing CTRL+C stops the embedder
@@ -80,14 +96,14 @@ bun run build:all
   PyInstaller cannot cross-compile — build on the target platform (CI does).
   Reads `config.jsonc` from its start directory by default; pass `--config
   <file>`. Run once with `--init`, then run normally. The VM mounts
-  `sandbox.mountDir` at `/data`. First start extracts the archive to the temp
-  dir (~10-20 s).
+  current working directory at `/data`. First start extracts the archive to the
+  temp dir (~10-20 s).
 
 ## Scripts
 
 | Command | What it does |
 |---------|--------------|
-| `bun run init:sandbox` | hashes `sandbox.initScript`, mounts its sibling `init/` at `/mnt/init`, and creates `.quicksand/sandboxes/ubuntu-<sha256>` when absent |
+| `bun run init:sandbox` | hashes `sandbox.initScript`, mounts its sibling `init/` at `/mnt/init`, and creates `sandbox.cacheDir/ubuntu-<sha256>` when absent |
 | `bun run start:opencode` | initializes and starts the sandbox, waits for readiness, then starts the embedder; CTRL+C stops both in order |
 | `bun run start:sandbox` | boots the matching `ubuntu-<sha256>` image (interactive: Enter stops; CI: 5-min hold) |
 | `bun run start:embed` | fetches `opencode.tag`, syncs `opencode/*.ts` → `build/opencode/poc`, installs dependencies, and starts the embedder |
@@ -97,7 +113,9 @@ bun run build:all
 
 ## Configuration
 
-Paths in `config.jsonc` are resolved relative to that file.
+Paths in `config.jsonc` are resolved relative to that file. `run_opencode`
+loads `~/.opencode-quicksand/config.jsonc`; repository scripts default to the
+root config and also accept `--config <file>`.
 The checked-in configuration points at the gitignored `run/` directory; create
 it from `run-template/` before first use. Runtime databases and local config
 changes therefore stay untracked while the complete starting layout remains
@@ -110,7 +128,10 @@ versioned.
 | `opencode.tag` | Git tag, branch, or commit fetched for the pinned checkout |
 | `opencode.port` | embedder HTTP port |
 | `sandbox.initScript` | bash file whose SHA-256 selects the saved image |
-| `sandbox.mountDir` | host directory mounted at `/data` and used as the workspace |
+| `sandbox.cacheDir` | directory containing content-addressed sandbox images |
+
+The directory where `run_opencode` is invoked is always mounted at `/data` and
+used as the OpenCode workspace.
 
 During `init:sandbox`, the directory named `init` beside `sandbox.initScript`
 is mounted at `/mnt/init`. It is a host mount and is **not** persisted in the

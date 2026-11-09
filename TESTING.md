@@ -4,7 +4,7 @@ Three pieces run in this order — each in its **own terminal** so they stay ali
 
 ```
 [0] bun run init:sandbox    → creates ubuntu-<init-script-sha256> when absent
-[1] bun run start:sandbox   → Ubuntu VM: sshd on 127.0.0.1:2222, sandbox.mountDir mounted at /data
+[1] bun run start:sandbox   → Ubuntu VM: sshd on 127.0.0.1:2222, launch directory mounted at /data
 [2] bun run start:embed     → opencode embedder on config.jsonc's opencode.port
 [3] opencode run            → drives the agent; every Read/Write/Shell executes in the VM
 ```
@@ -52,7 +52,7 @@ Prerequisites (one-time):
 ## 1. Start the ssh server (quicksand VM)
 
 From the repo root (wherever you cloned it — same command in bash and
-PowerShell; the VM mounts `sandbox.mountDir` at `/data`):
+PowerShell; the VM mounts the launch directory at `/data`):
 
 ```bash
 cd opencode-quicksand
@@ -67,7 +67,7 @@ bun run start:sandbox
 ```
 
 - `init:sandbox` hashes the exact init-script bytes. If
-  `.quicksand/sandboxes/ubuntu-<sha256>` does not exist, it boots the base
+  `sandbox.cacheDir/ubuntu-<sha256>` does not exist, it boots the base
   Ubuntu image, runs the file with `bash -s`, and saves the resulting disk
 - While the script runs, its sibling `init/` directory is mounted at
   `/mnt/init`. Mount contents are not part of the saved image; the script must
@@ -76,7 +76,7 @@ bun run start:sandbox
 - Generates `quicksand/ssh/quicksand_demo` (+`.pub`) on first run and injects the
   pubkey into the VM (key auth, `BatchMode` — no password prompts for the driver)
 - Boots the saved `ubuntu-<sha256>` image with `NetworkMode.FULL`, mounts
-  `sandbox.mountDir` at `/data`, forwards guest 22 → host
+  the launch directory at `/data`, forwards guest 22 → host
   `127.0.0.1:2222`
 - Interactive terminal: waits for **Enter** to stop. Background/CI (stdin EOF):
   holds the VM open for **5 minutes**, then shuts down
@@ -116,14 +116,14 @@ What it does: fetches the opencode checkout at the pinned commit into
 `poc/`, `bun install --frozen-lockfile`, creates the `effect` junction (a
 plain symlink on Linux/macOS), then runs `bun poc/embed.ts` → server on
 the configured port (loads `opencode.configDir/opencode.jsonc`, persists state
-in `opencode.cacheDir/opencode.db`, and uses `sandbox.mountDir` as the workspace).
+in `opencode.cacheDir/opencode.db`, and uses the launch directory as the workspace).
 
 Ready when you see:
 
 ```
 opencode embedder listening on http://localhost:<opencode.port>
 database: ...<opencode.cacheDir>/opencode.db
-placing sessions into ssh workspace wrk_quicksand_ssh at ...<sandbox.mountDir>
+placing sessions into ssh workspace wrk_quicksand_ssh at ...<launch directory>
 ```
 
 Stop with CTRL+C (kills the whole bun/ssh child tree). `SSH_DRIVER_LOG=1` traces
@@ -161,7 +161,7 @@ rm sandbox-test.txt
 - `--auto` auto-approves tool permissions
 - The kernel version must be the **guest's** (`6.8.0-147-generic` for the
   current image) — if you see the host kernel, the session leaked (FINDINGS.md #11)
-- Session cwd is `sandbox.mountDir`; use host-relative
+- Session cwd is the launch directory; use host-relative
   or guest-native paths in prompts. On **Windows** hosts bare `/data/...`
   gets reinterpreted as `C:\data\...` by the host tool layer (FINDINGS.md);
   on POSIX hosts guest-native paths pass through unchanged
@@ -169,7 +169,7 @@ rm sandbox-test.txt
 Useful test prompts:
 
 ```powershell
-# commands execute inside the VM (hostname/uname prove it; /data = sandbox.mountDir).
+# commands execute inside the VM (hostname/uname prove it; /data = launch directory).
 # Avoid `;` chains + unicode punctuation in run instructions — the portable
 # shell scanner rejects them (FINDINGS.md #12). Use && chains instead.
 opencode run --server http://localhost:14096 --auto `
@@ -233,7 +233,7 @@ bun run build:all
   PyInstaller cannot cross-compile — build on the target platform. Place
   `config.jsonc` in the start directory (or pass `--config <file>`), run once
   with `--init`, then run normally. It creates `ssh/` next to itself and mounts
-  `sandbox.mountDir` at `/data`. First start extracts the archive to the temp
+  the current working directory at `/data`. First start extracts the archive to the temp
   dir (~10-20 s)
 - Release CI (`.github/workflows/release.yml`): push a `v*` tag → draft
   GitHub Release with `embed-{windows-x64.exe,linux-x64,linux-arm64,

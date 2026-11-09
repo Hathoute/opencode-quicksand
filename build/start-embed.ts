@@ -5,7 +5,7 @@ import { existsSync } from "node:fs"
 import path from "path"
 import { ensureDeps, ensureRepo, syncPoc } from "./repo"
 import { CHECKOUT_DIR, SSH_KEY } from "./common"
-import { CONFIG_FILE, config } from "./config"
+import { CONFIG_FILE, WORKSPACE_DIR, config } from "./config"
 
 const configFile = path.join(config.opencode.configDir, "opencode.jsonc")
 if (!existsSync(configFile)) throw new Error(`opencode config not found: ${configFile}`)
@@ -20,7 +20,7 @@ process.env.SSH_PORT ??= "2222"
 process.env.SSH_KEY ??= SSH_KEY
 process.env.SSH_DRIVER_LOG ??= "1"
 
-const proc = Bun.spawn(["bun", "poc/embed.ts", "--config", CONFIG_FILE], {
+const proc = Bun.spawn(["bun", "poc/embed.ts", "--config", CONFIG_FILE, "--workspace", WORKSPACE_DIR], {
   cwd: CHECKOUT_DIR,
   stdout: "inherit",
   stderr: "inherit",

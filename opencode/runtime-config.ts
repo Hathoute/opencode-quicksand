@@ -17,7 +17,7 @@ export const loadRuntimeConfig = async (file: string) => {
     },
     sandbox: {
       initScript: resolve(base, string(sandbox.initScript, "sandbox.initScript")),
-      mountDir: resolve(base, string(sandbox.mountDir, "sandbox.mountDir")),
+      cacheDir: resolve(base, string(sandbox.cacheDir, "sandbox.cacheDir")),
     },
   }
 }

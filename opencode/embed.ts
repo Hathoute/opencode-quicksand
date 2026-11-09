@@ -4,10 +4,14 @@ import path from "path"
 import { EmbeddedHost } from "../packages/sdk/src/internal/host"
 import { Bus } from "../packages/core/src/bus"
 import { Workspace } from "../packages/core/src/workspace"
+import type { Agent } from "../packages/schema/src/agent"
+import type { Model } from "../packages/schema/src/model"
+import type { Permission } from "../packages/schema/src/permission"
 import { SessionEvent } from "../packages/schema/src/session-event"
 import type { Session } from "../packages/schema/src/session"
 import { sshWorkspaceDriver } from "./driver"
 import type { PathMap, SshTarget } from "./driver"
+import { sessionMovePlugin } from "./plugins/session-move"
 import { loadRuntimeConfig } from "./runtime-config"
 
 const configArgument = process.argv.indexOf("--config")
@@ -16,6 +20,10 @@ if (configArgument !== -1 && process.argv[configArgument + 1] === undefined)
 const runtime = await loadRuntimeConfig(
   configArgument === -1 ? path.resolve("config.jsonc") : process.argv[configArgument + 1],
 )
+const workspaceArgument = process.argv.indexOf("--workspace")
+if (workspaceArgument !== -1 && process.argv[workspaceArgument + 1] === undefined)
+  throw new Error("--workspace requires a directory path")
+const hostDataDir = path.resolve(workspaceArgument === -1 ? process.cwd() : process.argv[workspaceArgument + 1])
 const port = runtime.opencode.port
 
 // Load the complete config (including provider/model settings) from an
@@ -40,11 +48,8 @@ const sshTarget: SshTarget = {
   keyFile: process.env.SSH_KEY ?? "",
 }
 
-// Host directory mounted at /data in the sandbox, configured once through
-// sandbox.mountDir so the VM mount and session workspace cannot diverge.
-// Sessions are placed here so tools execute against the sandbox while config
-// discovery and project resolution stay host-side.
-const hostDataDir = runtime.sandbox.mountDir
+// The launcher's original working directory is both mounted at /data and used
+// as the session workspace, so tools operate on the directory being launched.
 
 // Pin the sandbox's host key at every boot: ssh-keyscan writes it next to the
 // identity so the driver's ssh invocations verify silently. With the previous
@@ -97,6 +102,9 @@ const program = Effect.gen(function* () {
     }),
     (host) => Effect.promise(host.close),
   )
+  // SDK plugins activate after OpenCode's built-ins, so registering the same
+  // effective tool name replaces session_move without patching the checkout.
+  yield* host.plugins.register(sessionMovePlugin(host.sessions))
   // Sessions must be BORN in the ssh workspace. Post-create moves only land
   // at a "safe inbox boundary", so a session's first turn can race the move
   // and run host-local (observed: `uname -r` returning the Windows host's
@@ -104,9 +112,9 @@ const program = Effect.gen(function* () {
   // decode, so rewriting the request body is useless — instead intercept the
   // POST /api/session create and call the core Session.Service with a full
   // Location.Ref, whose in-process schema keeps workspaceID. parentID creates
-  // (child inherits its parent's location) and explicit ids (adopt/resume)
-  // pass through to the default handler; the bus sweep below remains the
-  // fallback for anything that still slips out implicit-local.
+  // pass through so children inherit their parent's location; explicit ids are
+  // handled here because the TUI mints them before creating a session. Existing
+  // ids remain safe because Session.create adopts their recorded location.
   const createInWorkspace = async (request: Request) => {
     const url = new URL(request.url)
     // The CLI closes its SSE subscription after every non-interactive run.
@@ -126,26 +134,33 @@ const program = Effect.gen(function* () {
       .json()
       .catch(() => undefined)) as
       | {
-          parentID?: string
-          id?: string
+          parentID?: Session.ID
+          id?: Session.ID
           title?: string
-          agent?: string
-          model?: string
-          metadata?: unknown
-          permissions?: unknown
+          agent?: Agent.ID
+          model?: Model.Ref
+          metadata?: Session.Metadata
+          permissions?: Permission.Ruleset
           location?: { directory?: string }
         }
       | undefined
-    if (payload === undefined || payload.parentID !== undefined || payload.id !== undefined) return pass()
+    if (payload === undefined || payload.parentID !== undefined) return pass()
     try {
+      const requested = path.resolve(payload.location?.directory ?? hostDataDir)
+      const relative = path.relative(hostDataDir, requested)
+      const directory =
+        relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+          ? requested
+          : hostDataDir
       const session = await host.runtime.runPromise(
         host.sessions.create({
+          id: payload.id,
           title: payload.title,
           agent: payload.agent,
           model: payload.model,
           metadata: payload.metadata,
           permissions: payload.permissions,
-          location: { directory: payload.location?.directory ?? hostDataDir, workspaceID },
+          location: { directory, workspaceID },
         }),
       )
       console.log(`session ${session.id} born in ssh workspace ${workspaceID}`)
