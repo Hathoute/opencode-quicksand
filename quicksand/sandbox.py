@@ -1,4 +1,6 @@
 """Ubuntu sandbox demo:
+- derives a persistent image name from SANDBOX_INIT_SCRIPT's SHA-256
+- --init creates that image from Ubuntu when it does not already exist
 - NetworkMode.FULL (internet access)
 - mounts the directory it is RUN FROM (the caller's CWD) at /data in the VM;
   SANDBOX_MOUNT_DIR overrides this
@@ -9,6 +11,7 @@
 """
 
 import asyncio
+import hashlib
 import os
 import subprocess
 import sys
@@ -33,6 +36,16 @@ def _script_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent
+
+
+def _init_script() -> Path:
+    value = os.environ.get("SANDBOX_INIT_SCRIPT", "").strip()
+    if not value:
+        raise RuntimeError("SANDBOX_INIT_SCRIPT is required")
+    script = Path(value).expanduser().resolve()
+    if not script.is_file():
+        raise FileNotFoundError(f"SANDBOX_INIT_SCRIPT does not exist or is not a file: {script}")
+    return script
 
 
 def patch_frozen_qemu():
@@ -70,19 +83,10 @@ def patch_frozen_qemu():
 
 MOUNT_DIR = _mount_dir()
 KEY_PATH = _script_dir() / "ssh" / "quicksand_demo"
+INIT_SCRIPT = _init_script()
+IMAGE_NAME = f"ubuntu-{hashlib.sha256(INIT_SCRIPT.read_bytes()).hexdigest()}"
+IMAGE_PATH = Path.cwd() / ".quicksand" / "sandboxes" / IMAGE_NAME
 patch_frozen_qemu()
-
-SSH_SETUP = (
-    "if ! command -v sshd >/dev/null 2>&1; then "
-    "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server; fi && "
-    "mkdir -p /run/sshd /etc/ssh/sshd_config.d /root/.ssh && "
-    "printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/99-demo.conf && "
-    "echo 'root:root' | sudo chpasswd && "
-    "echo '{pubkey}' >> /root/.ssh/authorized_keys && "
-    "chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && "
-    "(sudo service ssh restart || sudo service ssh start || sudo /usr/sbin/sshd) && "
-    "ss -tln | grep ':22 ' && echo SSH-READY"
-)
 
 
 def ensure_keypair() -> str:
@@ -96,12 +100,32 @@ def ensure_keypair() -> str:
     return KEY_PATH.with_suffix(".pub").read_text().strip()
 
 
+async def init_image():
+    if IMAGE_PATH.exists():
+        Sandbox.validate_save(IMAGE_PATH)
+        print(f"Sandbox image already exists: {IMAGE_NAME}")
+        return
+
+    print(f"Creating sandbox image {IMAGE_NAME} from {INIT_SCRIPT}...")
+    async with Sandbox(image="ubuntu", network_mode=NetworkMode.FULL) as sb:
+        result = await sb.execute("bash -s", stdin=INIT_SCRIPT.read_bytes(), timeout=900)
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+        if result.exit_code != 0:
+            raise RuntimeError(f"SANDBOX_INIT_SCRIPT failed with exit code {result.exit_code}")
+        await sb.save(IMAGE_NAME)
+    print(f"Sandbox image saved: {IMAGE_NAME}")
+
+
 async def main():
     pubkey = ensure_keypair()
     print(f"SSH keypair: {KEY_PATH} (+ .pub)")
+    print(f"Sandbox image: {IMAGE_NAME}")
 
     async with Sandbox(
-        image="ubuntu",
+        image=IMAGE_NAME,
         network_mode=NetworkMode.FULL,
         mounts=[Mount(str(MOUNT_DIR), "/data")],
         port_forwards=[Forward(Host(2222), Guest(22))],
@@ -114,14 +138,15 @@ async def main():
         print(f"Mount check  (ls {MOUNT_DIR} as /data): {'OK' if mount_ok else 'FAILED'}")
         print(f"  /data: {result.stdout.strip().replace(chr(10), ', ')[:200]!r}")
 
-        # Set up and start the SSH server in the guest
-        print("Setting up SSH server in guest (installs openssh-server if missing)...")
-        r = await sb.execute(SSH_SETUP.format(pubkey=pubkey), timeout=300)
-        if "SSH-READY" not in r.stdout:
-            print("SSH setup FAILED:")
-            print(r.stdout)
-            print(r.stderr)
-            return
+        # Refresh the authorized key on every boot. OpenSSH installation and
+        # service configuration belong to SANDBOX_INIT_SCRIPT; intentionally do
+        # not validate sshd here, so a broken custom image fails at the driver.
+        await sb.execute(
+            "mkdir -p /root/.ssh && cat > /root/.ssh/authorized_keys && "
+            "chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys",
+            stdin=pubkey + "\n",
+            timeout=30,
+        )
 
         print()
         print("Sandbox is ready:")
@@ -137,4 +162,9 @@ async def main():
             print("(non-interactive: holding sandbox open for 5 minutes)")
             await asyncio.sleep(300)
 
-asyncio.run(main())
+if sys.argv[1:] == ["--init"]:
+    asyncio.run(init_image())
+elif sys.argv[1:]:
+    raise RuntimeError(f"unknown arguments: {' '.join(sys.argv[1:])}")
+else:
+    asyncio.run(main())

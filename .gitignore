@@ -1,4 +1,5 @@
 /run
+/.quicksand
 
 build/dist
 build/opencode

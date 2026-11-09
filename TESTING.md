@@ -3,10 +3,15 @@
 Three pieces run in this order — each in its **own terminal** so they stay alive:
 
 ```
+[0] bun run init:sandbox    → creates ubuntu-<init-script-sha256> when absent
 [1] bun run start:sandbox   → Ubuntu VM: sshd on 127.0.0.1:2222, caller's CWD mounted at /data
 [2] bun run start:embed     → opencode embedder (SDK server) on http://localhost:4096
 [3] opencode run            → drives the agent; every Read/Write/Shell executes in the VM
 ```
+
+Steps 0–2 can instead share one terminal via `bun run start:opencode`. The
+launcher initializes the image when needed, waits for sandbox readiness, and on
+CTRL+C stops the embedder before closing the sandbox gracefully.
 
 ## Host platform support
 
@@ -42,6 +47,8 @@ Prerequisites (one-time):
   provider authentication; include `"shell": "bash"` so shell commands target
   the Linux guest
 - a writable `OPENCODE_CACHE_DIR` for the embedder's persistent SQLite database
+- a `SANDBOX_INIT_SCRIPT` bash file; the provided `quicksand/init.sh` installs
+  and enables OpenSSH
 
 ---
 
@@ -53,17 +60,30 @@ mounts that directory at `/data`):
 
 ```bash
 cd opencode-quicksand
+export SANDBOX_INIT_SCRIPT="$PWD/quicksand/init.sh"
+bun run init:sandbox
 bun run start:sandbox
 ```
 
+```powershell
+$env:SANDBOX_INIT_SCRIPT = "$PWD\quicksand\init.sh"
+bun run init:sandbox
+bun run start:sandbox
+```
+
+- `init:sandbox` hashes the exact init-script bytes. If
+  `.quicksand/sandboxes/ubuntu-<sha256>` does not exist, it boots the base
+  Ubuntu image, runs the file with `bash -s`, and saves the resulting disk
 - Generates `quicksand/ssh/quicksand_demo` (+`.pub`) on first run and injects the
   pubkey into the VM (key auth, `BatchMode` — no password prompts for the driver)
-- Boots Ubuntu with `NetworkMode.FULL`, mounts **the directory you run it from**
+- Boots the saved `ubuntu-<sha256>` image with `NetworkMode.FULL`, mounts **the directory you run it from**
   (the project root when invoked via `bun run start:sandbox`; override with
   `SANDBOX_MOUNT_DIR`) at `/data`, forwards guest 22 → host `127.0.0.1:2222`
 - Interactive terminal: waits for **Enter** to stop. Background/CI (stdin EOF):
   holds the VM open for **5 minutes**, then shuts down
-- Wait for `Sandbox is ready:` (~1 min: boot + sshd setup)
+- Wait for `Sandbox is ready:` (boot + key injection). The launcher does not
+  validate sshd; removing OpenSSH from the init script causes the SSH driver to
+  fail later as expected.
 
 Verify (works from any host; the mount now holds the project root, so README.md
 is the sentinel — forward slashes are fine in PowerShell too):
@@ -216,10 +236,11 @@ bun run build:all
   served an agent session whose tools executed inside the VM
 - `sandbox-*` (~330 MB): PyInstaller onefile in the uv-managed `build`
   dependency-group (interpreter + quicksand + Ubuntu image + QEMU binaries).
-  PyInstaller cannot cross-compile — build on the target platform. Creates
-  `ssh/` next to itself; the VM mounts the directory the exe is STARTED FROM
-  at `/data` (`SANDBOX_MOUNT_DIR` overrides). First start extracts the
-  archive to the temp dir (~10-20 s)
+  PyInstaller cannot cross-compile — build on the target platform. Set
+  `SANDBOX_INIT_SCRIPT`, run the executable once with `--init`, then run it
+  normally. It creates `ssh/` next to itself and mounts its start directory at
+  `/data` (`SANDBOX_MOUNT_DIR` overrides). First start extracts the archive to
+  the temp dir (~10-20 s)
 - Release CI (`.github/workflows/release.yml`): push a `v*` tag → draft
   GitHub Release with `embed-{windows-x64.exe,linux-x64,linux-arm64,
   macos-arm64}` (one Linux runner, cross-compiled) +
@@ -230,6 +251,8 @@ bun run build:all
 
 | Symptom | Cause / fix |
 |---------|-------------|
+| `SANDBOX_INIT_SCRIPT is required` / `does not exist` | set it to an existing bash file, e.g. `quicksand/init.sh` |
+| `Image not found: ubuntu-...` | run `bun run init:sandbox` before `start:sandbox`, or use `start:opencode` |
 | `Host key verification failed` on the first manual `ssh` (under `BatchMode`) | fresh host: no known_hosts entry yet — add `-o StrictHostKeyChecking=accept-new` (as in the step 1 verify) |
 | Every driver call logs `Warning: Permanently added '[localhost]:2222'`; embedder logged `ssh-keyscan got no host key` | IPv6-first `localhost` + forward bound to 127.0.0.1 (FINDINGS.md #13); fixed in `embed.ts` — resync + restart the embedder with the sandbox up |
 | Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — clear the stale user entry: `ssh-keygen -R "[127.0.0.1]:2222"` (the driver is unaffected: the embedder re-pins `quicksand/ssh/known_hosts` each boot) |

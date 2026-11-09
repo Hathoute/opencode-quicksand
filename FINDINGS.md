@@ -308,3 +308,13 @@ pins 3.12 (uv downloads the interpreter — no system-python prerequisite; the
 selects the environment WITHOUT changing the child's cwd — critical because
 sandbox.py mounts its CWD at /data in the guest). PyInstaller lives in a
 `build` dependency-group so runtime syncs stay slim.
+
+## 17. Sandbox initialization is content-addressed
+
+The sandbox no longer installs OpenSSH on every boot. `SANDBOX_INIT_SCRIPT`
+points to a bash file whose exact bytes are SHA-256 hashed. `init:sandbox`
+boots the base Ubuntu image, runs the script, and saves the disk as
+`.quicksand/sandboxes/ubuntu-<sha256>`; subsequent starts boot that save.
+Changing the script automatically selects a new image. Normal startup only
+refreshes the generated SSH public key and deliberately does not validate
+sshd, so custom scripts own the guest's SSH behavior completely.

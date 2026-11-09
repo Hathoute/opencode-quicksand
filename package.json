@@ -2,6 +2,8 @@
   "name": "opencode-quicksand",
   "private": true,
   "scripts": {
+    "init:sandbox": "bun build/init-sandbox.ts",
+    "start:opencode": "bun build/start-opencode.ts",
     "start:sandbox": "bun build/start-sandbox.ts",
     "start:embed": "bun build/start-embed.ts",
     "build:embed": "bun build/build-embed-exe.ts",
