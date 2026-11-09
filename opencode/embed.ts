@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Stream } from "effect"
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync } from "node:fs"
 import path from "path"
 import { EmbeddedHost } from "../packages/sdk/src/internal/host"
 import { Bus } from "../packages/core/src/bus"
@@ -14,6 +14,7 @@ import { sshWorkspaceDriver } from "./driver"
 import type { PathMap, SshTarget } from "./driver"
 import { sessionMovePlugin } from "./plugins/session-move"
 import { loadRuntimeConfig } from "./runtime-config"
+import { pinHostKey } from "./ssh"
 
 const configArgument = process.argv.indexOf("--config")
 if (configArgument !== -1 && process.argv[configArgument + 1] === undefined)
@@ -58,41 +59,10 @@ const sshTarget: SshTarget = {
 // The launcher's original working directory is both mounted at /data and used
 // as the session workspace, so tools operate on the directory being launched.
 
-// Pin the sandbox's host key at every boot: ssh-keyscan writes it next to the
-// identity so the driver's ssh invocations verify silently. With the previous
-// UserKnownHostsFile=<null> accept-and-discard setup, ssh printed "Warning:
-// Permanently added …" into stderr on EVERY tool call. Always re-scan (the VM
-// generates fresh host keys per boot); when the sandbox is not listening,
-// remove a stale file so the driver falls back to accept-and-discard instead
-// of failing verification against a key that no longer exists.
-const knownHosts = sshTarget.keyFile !== "" ? path.join(path.dirname(sshTarget.keyFile), "known_hosts") : undefined
-if (knownHosts !== undefined) {
-  // Scan the forward's literal bind address, not the configured host name:
-  // "localhost" often resolves to ::1 first (Linux default), the port forward
-  // listens on 127.0.0.1 only, and ssh-keyscan — unlike the ssh client — does
-  // not fall back across address families, so scanning "localhost" yields
-  // nothing and every driver call pays the accept-and-discard warning.
-  const scanHost = sshTarget.host === "localhost" ? "127.0.0.1" : sshTarget.host
-  const scan = Bun.spawnSync(["ssh-keyscan", "-p", String(sshTarget.port), "-t", "ed25519,rsa", scanHost])
-  const keys = scan.stdout
-    .toString()
-    .split("\n")
-    .filter((line) => line.trim() !== "" && !line.startsWith("#"))
-    .flatMap((line) => {
-      const rest = line.split(" ").slice(1).join(" ")
-      return [`[localhost]:${sshTarget.port} ${rest}`, `[127.0.0.1]:${sshTarget.port} ${rest}`]
-    })
-  if (keys.length > 0) {
-    writeFileSync(knownHosts, keys.join("\n") + "\n")
-    console.log(`host key pinned: ${knownHosts} (${keys.length} entries)`)
-  } else {
-    rmSync(knownHosts, { force: true })
-    console.log(
-      `ssh-keyscan got no host key from ${sshTarget.host}:${sshTarget.port} (sandbox down?); ` +
-        "driver will accept-and-discard (expect the added-host warning)",
-    )
-  }
-}
+// Pin the sandbox's host key for this boot (see ssh.ts): silent verified
+// driver invocations instead of an accept-and-discard warning per tool call.
+pinHostKey(sshTarget)
+
 const pathMap: PathMap = { host: hostDataDir, guest: "/data" }
 
 // Fixed id: adopts the same logical workspace across embed restarts. The SSH

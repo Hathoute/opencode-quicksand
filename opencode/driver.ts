@@ -1,8 +1,6 @@
 import { Effect, PlatformError, Sink, Stream } from "effect"
 import { ExitCode, make, makeHandle, ProcessId } from "effect/process/ChildProcessSpawner"
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
-import { existsSync } from "node:fs"
-import path from "path"
 import type { WorkspaceDriver } from "../packages/core/src/workspace/driver"
 import type { EnvironmentDriver } from "../packages/core/src/environment/driver"
 import type { FilesImpl } from "../packages/core/src/environment/files"
@@ -10,6 +8,10 @@ import { execDefaults } from "../packages/core/src/environment/exec-defaults"
 import { linuxAdapter } from "./driver-linux"
 import { macosAdapter } from "./driver-macos"
 import { windowsAdapter } from "./driver-windows"
+import { sshArgs } from "./ssh"
+import type { SshTarget } from "./ssh"
+
+export type { SshTarget } from "./ssh"
 
 /** A guest command after host-shell translation. */
 export interface GuestCommand {
@@ -79,14 +81,6 @@ const lineBuffered = (guest: GuestCommand): string => {
   return `if command -v stdbuf >/dev/null 2>&1; then exec stdbuf -oL -eL ${cmd}; else exec ${cmd}; fi`
 }
 
-export interface SshTarget {
-  host: string
-  port: number
-  user: string
-  /** path to an OpenSSH private key (BatchMode: no password prompts) */
-  keyFile: string
-}
-
 /**
  * Maps the host directory backing a sandbox mount onto its guest path
  * (host ...\quicksand-example\data <-> guest /data). Session Locations keep the
@@ -131,31 +125,7 @@ export const sshSpawner = (
     const guest = platform.guestShell(command.command, command.args)
     remote.push(lineBuffered(guest))
 
-    // Host-key pinning: verify silently against the known_hosts beside the
-    // identity when it exists (the embedder's boot ssh-keyscan wrote it).
-    // Without the file (embedder started before the sandbox) accept-and-
-    // discard, which prints "Warning: Permanently added …" into stderr on
-    // EVERY invocation because the null file cannot store anything.
-    const knownHosts = path.join(path.dirname(target.keyFile), "known_hosts")
-    const hostKeyArgs = existsSync(knownHosts)
-      ? ["-o", `UserKnownHostsFile=${knownHosts}`, "-o", "StrictHostKeyChecking=yes"]
-      : ["-o", "StrictHostKeyChecking=no", "-o", `UserKnownHostsFile=${platform.nullKnownHosts}`]
-
-    const args = [
-      "ssh",
-      "-T",
-      "-x",
-      "-i",
-      target.keyFile,
-      "-o",
-      "BatchMode=yes",
-      ...hostKeyArgs,
-      "-p",
-      String(target.port),
-      `${target.user}@${target.host}`,
-      "--",
-      remote.join(" "),
-    ]
+    const args = sshArgs(target, platform.nullKnownHosts, remote.join(" "))
 
     debug(
       `spawn: ${remote.join(" ").slice(0, 300)}${remote.join(" ").length > 300 ? " …" : ""} (cwd=${cwd ?? "-"} stdin=${command.options.stdin !== undefined ? "stream" : "closed"})`,
