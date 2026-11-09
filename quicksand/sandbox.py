@@ -10,6 +10,7 @@
 """
 
 import argparse
+import atexit
 import asyncio
 import hashlib
 import json
@@ -356,6 +357,7 @@ async def main():
     ssh_host_port = _available_ssh_port()
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     SSH_PORT_PATH.write_text(f"{ssh_host_port}\n")
+    atexit.register(SSH_PORT_PATH.unlink, missing_ok=True)
     print(f"SSH keypair: {KEY_PATH} (+ .pub)")
     print(f"Sandbox image: {IMAGE_NAME}")
 
