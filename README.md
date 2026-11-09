@@ -93,13 +93,14 @@ bun run build:all
   pty binary of the *target* platform is force-installed and embedded via the
   same plugin upstream uses. Reads `config.jsonc` from its start directory by
   default; pass `--config <file>` to use another file.
-- `sandbox-*` (~330 MB): PyInstaller onefile with interpreter + deps + Ubuntu
-  image + QEMU binaries, built in the uv-managed `build` dependency-group.
-  PyInstaller cannot cross-compile — build on the target platform (CI does).
-  Reads `config.jsonc` from its start directory by default; pass `--config
-  <file>`. Run once with `--init`, then run normally. The VM mounts
-  current working directory at `/data`. First start extracts the archive to the
-  temp dir (~10-20 s).
+- `sandbox-*` (~330 MB folder, shipped as a zip): PyInstaller **onedir** with
+  interpreter + deps + Ubuntu image + QEMU binaries, built in the uv-managed
+  `build` dependency-group. PyInstaller cannot cross-compile — build on the
+  target platform (CI does). Reads `config.jsonc` from its start directory by
+  default; pass `--config <file>`. Run once with `--init`, then run normally.
+  The VM mounts the current working directory at `/data`. Nothing extracts to
+  the temp dir at runtime (onedir executes in place, so machines whose policy
+  blocks executing from `%TEMP%` — WinError 1260 — work too).
 
 ## Scripts
 
@@ -110,7 +111,7 @@ bun run build:all
 | `bun run start:sandbox` | boots the matching `<sandbox.image>-<sha256>` image (interactive: Enter stops; CI: 5-min hold) |
 | `bun run start:embed` | fetches `opencode.tag`, syncs `opencode/*.ts` → `build/opencode/poc`, installs dependencies, and starts the embedder |
 | `bun run build:embed` | compiles `embed-<target>` for `EMBED_TARGET` (windows-x64, linux-x64, linux-arm64; default: host) |
-| `bun run build:sandbox` | `uv sync --frozen --group build`, then PyInstaller onefile as `sandbox-<os>-<arch>` |
+| `bun run build:sandbox` | `uv sync --frozen --group build`, warm the quicksand fat wheels from the quicksand index, then PyInstaller **onedir** as `sandbox-<os>-<arch>/` + `sandbox-<os>-<arch>.zip` |
 | `bun run build:all` | both (host target) |
 
 ## Configuration

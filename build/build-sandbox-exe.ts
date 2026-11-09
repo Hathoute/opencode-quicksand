@@ -1,12 +1,14 @@
-/** Builds the sandbox VM launcher as a standalone executable
- * (build/dist/sandbox-<os>-<arch>[.exe]): interpreter + deps + Ubuntu image +
- * QEMU binaries, via PyInstaller in the uv-managed build environment
- * (pyproject.toml `build` dependency-group). */
+/** Builds the sandbox VM launcher as a standalone directory + zip
+ * (build/dist/sandbox-<os>-<arch>/: interpreter + deps + Ubuntu image + QEMU
+ * binaries, via PyInstaller in the uv-managed build environment
+ * (pyproject.toml `build` dependency-group). --onedir rather than --onefile:
+ * a onefile exe executes bundled QEMU binaries out of %TEMP%, which policy
+ * blocks on many Windows machines (WinError 1260). */
 
-import { renameSync } from "node:fs"
+import { renameSync, rmSync } from "node:fs"
 import path from "path"
 import { $ } from "bun"
-import { DIST_DIR, PROJECT_ROOT, SANDBOX_DIR, ensureUv, exeSuffix, platformSlug } from "./common"
+import { DIST_DIR, PROJECT_ROOT, SANDBOX_DIR, ensureUv, platformSlug } from "./common"
 
 ensureUv()
 
@@ -107,11 +109,23 @@ if (!Number.isFinite(ubuntuBytes) || ubuntuBytes < 100 * 1024 * 1024)
   )
 console.log(`warmed quicksand_ubuntu: ${(ubuntuBytes / 1024 / 1024).toFixed(1)} MB of image data on disk`)
 
-await $`uv run --no-sync --project ${PROJECT_ROOT} pyinstaller --noconfirm --onefile --name sandbox --distpath ${DIST_DIR} --workpath ${path.join(DIST_DIR, "pyinstaller-work")} --specpath ${SANDBOX_DIR} --collect-all quicksand --collect-all quicksand_core --collect-all quicksand_qemu --collect-all quicksand_ubuntu --collect-all quicksand_smb --copy-metadata quick-sandbox --copy-metadata quicksand-core --copy-metadata quicksand-qemu --copy-metadata quicksand-ubuntu --copy-metadata quicksand-smb ${path.join(SANDBOX_DIR, "sandbox.py")}`
+await $`uv run --no-sync --project ${PROJECT_ROOT} pyinstaller --noconfirm --onedir --name sandbox --distpath ${DIST_DIR} --workpath ${path.join(DIST_DIR, "pyinstaller-work")} --specpath ${SANDBOX_DIR} --collect-all quicksand --collect-all quicksand_core --collect-all quicksand_qemu --collect-all quicksand_ubuntu --collect-all quicksand_smb --copy-metadata quick-sandbox --copy-metadata quicksand-core --copy-metadata quicksand-qemu --copy-metadata quicksand-ubuntu --copy-metadata quicksand-smb ${path.join(SANDBOX_DIR, "sandbox.py")}`
 
-// PyInstaller appends .exe only on Windows; release artifacts carry a
-// platform suffix so every target can live in the same directory.
-const built = path.join(DIST_DIR, `sandbox${exeSuffix}`)
-const final = path.join(DIST_DIR, `sandbox-${platformSlug()}${exeSuffix}`)
-renameSync(built, final)
-console.log(`built: ${final}`)
+// --onedir over --onefile: a onefile exe extracts itself (and every bundled
+// QEMU binary/DLL) into %TEMP% before executing them, which corporate policy
+// blocks with WinError 1260 (ERROR_ACCESS_DISABLED_BY_POLICY). A onedir build
+// keeps everything in a real directory and runs it in place — nothing is ever
+// executed from temp. PyInstaller appends .exe only on Windows; release
+// artifacts carry a platform suffix so every target can live together.
+const builtDir = path.join(DIST_DIR, "sandbox")
+const finalDir = path.join(DIST_DIR, `sandbox-${platformSlug()}`)
+rmSync(finalDir, { recursive: true, force: true })
+renameSync(builtDir, finalDir)
+
+// Ship the folder as one zip; consumers extract it anywhere and run the
+// launcher inside (no self-extraction step, nothing lands in %TEMP%).
+const zip = path.join(DIST_DIR, `sandbox-${platformSlug()}.zip`)
+rmSync(zip, { force: true })
+await $`uv run --no-sync --project ${PROJECT_ROOT} python -m zipfile -c ${zip} ${finalDir}`
+console.log(`built: ${finalDir}`)
+console.log(`zipped: ${zip}`)

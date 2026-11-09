@@ -30,12 +30,14 @@ Draft releases are published on GitHub for every `v*` tag:
 Each release contains (plus `checksums.txt`):
 
 ```
-embed-windows-x64.exe   embed-linux-x64   embed-linux-arm64   embed-macos-arm64
-sandbox-windows-x64.exe sandbox-linux-x64 sandbox-linux-arm64 sandbox-macos-arm64
+embed-windows-x64.exe     embed-linux-x64     embed-linux-arm64     embed-macos-arm64
+sandbox-windows-x64.zip   sandbox-linux-x64.zip sandbox-linux-arm64.zip sandbox-macos-arm64.zip
 ```
 
-Pick the pair matching your platform, put them in a directory of your choice
-(the sandbox creates its `ssh/` keys next to itself).
+The sandbox ships as a **directory in a zip** (interpreter + Ubuntu image +
+QEMU binaries — nothing is extracted to `%TEMP%` at runtime, so it also works
+on machines whose policy blocks executing from temp, WinError 1260). Pick the
+pair matching your platform, extract the zip anywhere.
 
 ### Option B — build from source
 
@@ -124,24 +126,24 @@ Also create the embedder's config directory with an `opencode.jsonc`:
 A tracked template for the runtime tree lives in `run-template/` (repository
 checkouts): copy it once and edit — `run/` is gitignored.
 
-## 3. Run `sandbox-*.exe`
+## 3. Run `sandbox-*`
 
-Run it from the directory whose contents should appear at `/data` in the VM
-(pass `--config` when `config.jsonc` is elsewhere). First use bakes the image
-(boots the VM once, runs `initScript`, saves it — several minutes; later boots
-reuse it):
+Extract the zip (`sandbox-<os>-<arch>.zip` → `sandbox-<os>-<arch>/sandbox.exe`
+plus its `_internal/` support files). Run that `sandbox.exe` from the directory
+whose contents should appear at `/data` in the VM (pass `--config` when
+`config.jsonc` is elsewhere). First use bakes the image (boots the VM once,
+runs `initScript`, saves it — several minutes; later boots reuse it):
 
 ```bash
 cd /path/to/your/workspace          # this becomes /data
-./sandbox-windows-x64.exe --config path/to/config.jsonc --init   # first run only
-./sandbox-windows-x64.exe --config path/to/config.jsonc          # every run
+path/to/sandbox-windows-x64/sandbox.exe --config path/to/config.jsonc --init   # first run only
+path/to/sandbox-windows-x64/sandbox.exe --config path/to/config.jsonc          # every run
 ```
 
 What happens:
 
-- first start extracts itself to `%TEMP%` (~10–20 s for the ~350 MB archive)
-- generates `ssh/quicksand_demo` (+ `.pub`) **next to the exe** and injects the
-  public key into the VM
+- generates `ssh/quicksand_demo` (+ `.pub`) **next to the launcher exe** (inside
+  the extracted folder) and injects the public key into the VM
 - boots the VM, mounts the current directory at `/data`, applies
   `sandbox.mounts` and `sandbox.portMapping`, forwards guest SSH to the first
   free loopback port from 52222 (published to `sandbox.cacheDir/ssh-port`)
