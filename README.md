@@ -1,5 +1,7 @@
 # opencode-quicksand
 
+(Fully vibecoded, proof of concept - Skip this project)
+
 Runs [opencode](https://github.com/anomalyco/opencode) with every tool execution
 inside a [quicksand](https://github.com/microsoft/quicksand) VM: the agent's
 Read/Write/Patch/Shell tools execute over SSH in an Ubuntu sandbox while the
