@@ -243,3 +243,76 @@ combination trips its tokenizer. Single commands and `&&` chains analyze fine.
 
 **Workaround:** phrase prompts with single commands or `&&` chains; avoid `;`
 chains and unicode punctuation inside "run this" instructions.
+
+## 13. ssh-keyscan of "localhost" fails on IPv6-first hosts
+
+**Symptom:** embedder boot logs `ssh-keyscan got no host key from
+localhost:2222 (sandbox down?)`, no `known_hosts` is pinned, and every driver
+ssh call prints `Warning: Permanently added '[localhost]:2222' …` into stderr.
+
+**Root cause:** the quicksand port forward binds `127.0.0.1` only. On Linux,
+`localhost` typically resolves to `::1` first, and `ssh-keyscan` — unlike the
+ssh client — does not fall back across address families, so the scan returns
+nothing while interactive `ssh root@localhost` works fine. Invisible on the
+IPv4-first Windows host this was developed on.
+
+**Fix (applied):** `embed.ts` scans the forward's literal bind address
+(`127.0.0.1`) when the configured host is `localhost`.
+
+## 14. Host-configured MCP servers spawn inside the guest (exit 127)
+
+**Symptom:** embedder log shows `spawning process { command:
+"/home/pan/.local/bin/browse", args: ["mcp"] }` routed through the ssh driver,
+dying with exit code 127 in the VM.
+
+**Cause:** MCP servers discovered from host config are launched as workspace
+processes — i.e. inside the sandbox — where their host-install paths don't
+exist.
+
+**Status: observed, not addressed.** Harmless for Read/Write/Shell (sessions
+proceed normally); a proper fix would filter host MCP configs at the embedder
+boundary.
+
+## 15. POSIX platform adapters implemented (Linux verified)
+
+`driver-linux.ts` / `driver-macos.ts` were throwing stubs — every session
+tool call on a POSIX host died with `… not implemented for Linux hosts yet`,
+which had kept steps 3–4 of TESTING.md Windows-only. Both adapters are now
+implemented (guestShell passthrough — POSIX hosts issue POSIX commands
+already; toGuestPath — case-sensitive prefix match, `/`-separators).
+**Verified on Linux** end-to-end: guest `uname -r` on the first tool call
+(no FINDINGS #11 host leak), Write/Read through the files plane with matching
+sha256 on both sides of the mount, stream-test lines ~2s apart, guest-native
+`/data/...` paths passing through unmangled. macOS is implemented by symmetry
+and untested on hardware.
+
+## 16. Python tooling moved to uv (lockfile, managed python, pip kept on purpose)
+
+`pip install 'quick-sandbox[qemu,ubuntu]'` alone is misleading: PyPI hosts
+only ~3.7KB **stub** wheels for the image/qemu packages. The real fat wheels
+(e.g. `quicksand_ubuntu-0.10.2-py3-none-manylinux_2_17_x86_64.whl`, ~309MB)
+live on quicksand's own PEP 503 index
+(`https://microsoft.github.io/quicksand/simple/`), and quicksand upgrades
+stub→fat at first boot by shelling out to `python -m pip install --index-url
+<quicksand-index> --extra-index-url pypi …` (`quicksand/cli/install.py`,
+`quicksand_core/_index.py`). No pip config is needed anywhere — the index is
+baked into the package.
+
+Two consequences for uv:
+
+1. uv-created environments ship **without pip**, so the lazy installer would
+   die. Fix: `pip` is a declared project dependency (`pyproject.toml`) —
+   `uv sync` installs it and the stub→fat upgrade works untouched.
+2. The fat wheels cannot be locked portably (same name+version as the stub,
+   per-platform wheels on a custom index), so `uv.lock` pins the stubs and
+   first boot performs the fat download with pip into `.venv`. Re-running
+   `uv sync` afterwards is fine: name+version still match the lock, so uv
+   does not strip the fat wheel.
+
+Everything else is uv-idiomatic now: `uv.lock` committed, `.python-version`
+pins 3.12 (uv downloads the interpreter — no system-python prerequisite; the
+`PYTHON` env var and `venvPython()` path juggling are gone), scripts run
+`uv sync --frozen` then `uv run --no-sync --project <root>` (`--project`
+selects the environment WITHOUT changing the child's cwd — critical because
+sandbox.py mounts its CWD at /data in the guest). PyInstaller lives in a
+`build` dependency-group so runtime syncs stay slim.
