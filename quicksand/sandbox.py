@@ -107,12 +107,17 @@ async def init_image():
         return
 
     print(f"Creating sandbox image {IMAGE_NAME} from {INIT_SCRIPT}...")
-    async with Sandbox(image="ubuntu", network_mode=NetworkMode.FULL) as sb:
-        result = await sb.execute("bash -s", stdin=INIT_SCRIPT.read_bytes(), timeout=900)
-        if result.stdout:
-            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
-        if result.stderr:
-            print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    # The base image is intentionally small; toolchain init scripts (JDK, Node,
+    # build tools) need room beyond its default virtual disk size. qcow2 keeps
+    # this sparse on the host.
+    async with Sandbox(image="ubuntu", network_mode=NetworkMode.FULL, disk_size="10G") as sb:
+        result = await sb.execute(
+            "bash -s",
+            stdin=INIT_SCRIPT.read_bytes(),
+            timeout=900,
+            on_stdout=lambda chunk: print(chunk, end="", flush=True),
+            on_stderr=lambda chunk: print(chunk, file=sys.stderr, end="", flush=True),
+        )
         if result.exit_code != 0:
             raise RuntimeError(f"SANDBOX_INIT_SCRIPT failed with exit code {result.exit_code}")
         await sb.save(IMAGE_NAME)
