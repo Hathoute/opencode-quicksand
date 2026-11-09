@@ -24,6 +24,20 @@ from pathlib import Path
 from quicksand import Forward, Guest, Host, Mount, NetworkMode, Sandbox
 
 
+def _force_utf8_stdio() -> None:
+    # Guest output (apt progress, tool banners) contains non-ASCII bytes; with
+    # console redirection on Windows Python decodes/encodes stdio as cp1252 and
+    # print() raises UnicodeEncodeError mid-stream, killing the whole run. Force
+    # UTF-8 with replacement for both directions.
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if encoding != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_force_utf8_stdio()
+
+
 def _arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.jsonc")
