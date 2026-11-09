@@ -1,26 +1,29 @@
-/** Starts the sandbox VM from source (quicksand/sandbox.py), bootstrapping the
- * venv on first run. Long-running: interactive terminal waits for Enter;
- * non-interactive (CI) holds the VM open for 5 minutes. */
+/** Starts the sandbox VM from source (quicksand/sandbox.py) inside the
+ * uv-managed project environment (pyproject.toml + uv.lock; uv also manages
+ * the interpreter via .python-version, so no system python is needed).
+ * Long-running: interactive terminal waits for Enter; non-interactive (CI)
+ * holds the VM open for 5 minutes. */
 
-import { existsSync } from "node:fs"
 import path from "path"
 import { $ } from "bun"
-import { SANDBOX_DIR, SANDBOX_VENV, pythonExe, venvPython } from "./common"
+import { PROJECT_ROOT, SANDBOX_DIR, ensureUv } from "./common"
 
-const venvPy = venvPython()
+ensureUv()
 
-if (!existsSync(venvPy)) {
-  console.log(`creating venv at ${SANDBOX_VENV}`)
-  await $`${pythonExe()} -m venv ${SANDBOX_VENV}`
-}
-await $`${venvPy} -m pip install --quiet 'quick-sandbox[qemu,ubuntu]'`
+// Declarative env: uv.lock pins quick-sandbox (+ qemu/ubuntu extras) and pip
+// (quicksand's first-boot image auto-install shells out to `python -m pip`;
+// uv-created environments ship without it). --frozen refuses lockfile drift.
+await $`uv sync --frozen`.cwd(PROJECT_ROOT)
 
-const proc = Bun.spawn([venvPy, path.join(SANDBOX_DIR, "sandbox.py")], {
-  // no cwd: the child must inherit THIS process's CWD — sandbox.py mounts the
-  // directory it is run from at /data in the guest. Forcing cwd to SANDBOX_DIR
-  // would mount quicksand/ itself instead of the caller's directory.
-  stdout: "inherit",
-  stderr: "inherit",
-  stdin: "inherit",
-})
+// no cwd on purpose: the child must inherit THIS process's CWD — sandbox.py
+// mounts the directory it is run from at /data in the guest. --project
+// selects the environment WITHOUT changing the child's working directory.
+const proc = Bun.spawn(
+  ["uv", "run", "--no-sync", "--project", PROJECT_ROOT, "python", path.join(SANDBOX_DIR, "sandbox.py")],
+  {
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  },
+)
 process.exit(await proc.exited)

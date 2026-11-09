@@ -8,18 +8,33 @@ export const POC_DIR = path.join(PROJECT_ROOT, "opencode")
 export const CHECKOUT_DIR = path.join(PROJECT_ROOT, "build", "opencode")
 /** Compiled executables land here. */
 export const DIST_DIR = path.join(PROJECT_ROOT, "build", "dist")
-/** The quicksand sandbox script + its venv and runtime state (data/, ssh/). */
+/** The quicksand sandbox script + its runtime state (ssh/). */
 export const SANDBOX_DIR = path.join(PROJECT_ROOT, "quicksand")
-export const SANDBOX_VENV = path.join(SANDBOX_DIR, ".venv")
-export const DATA_DIR = path.join(SANDBOX_DIR, "data")
 export const SSH_KEY = path.join(SANDBOX_DIR, "ssh", "quicksand_demo")
 
 export const DEFAULT_COMMIT = "ced73dc0f6c5b00c3a085b1d7b11ea31f790c5df"
 export const REPO_URL = "https://github.com/anomalyco/opencode.git"
 
-export const venvPython = (): string =>
-  process.platform === "win32"
-    ? path.join(SANDBOX_VENV, "Scripts", "python.exe")
-    : path.join(SANDBOX_VENV, "bin", "python")
+/** Release-artifact platform slug: <os>-<arch> (windows-x64, linux-arm64, …). */
+export const platformSlug = (): string => {
+  const os =
+    process.platform === "win32"
+      ? "windows"
+      : process.platform === "darwin"
+        ? "macos"
+        : "linux"
+  return `${os}-${process.arch}`
+}
 
-export const pythonExe = (): string => process.env.PYTHON ?? "python"
+/** Executable suffix on this host ("" on POSIX, ".exe" on Windows). */
+export const exeSuffix = process.platform === "win32" ? ".exe" : ""
+
+/** Guard: the uv-managed environment is the single source of Python tooling. */
+export const ensureUv = (): void => {
+  if (Bun.which("uv") !== null) return
+  console.error(
+    "uv is required but not on PATH — install it first: " +
+      "https://docs.astral.sh/uv/getting-started/installation/",
+  )
+  process.exit(1)
+}
