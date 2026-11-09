@@ -1,0 +1,109 @@
+# Release binaries for all supported platforms (Windows x64, Linux x64/arm64).
+#
+#   embed   — bun cross-compiles every target from one Linux runner
+#   sandbox — PyInstaller cannot cross-compile: one job per target platform
+#
+# Trigger: push a v* tag (creates a draft GitHub Release with all binaries +
+# checksums), or workflow_dispatch (builds and uploads artifacts only, for
+# testing the pipeline without cutting a release).
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  embed:
+    name: embed (all targets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: build every embed target
+        run: |
+          set -euxo pipefail
+          for target in windows-x64 linux-x64 linux-arm64; do
+            EMBED_TARGET="$target" bun run build:embed
+          done
+      - name: checksums
+        run: |
+          cd build/dist
+          sha256sum embed-* > embed-checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: embed
+          path: build/dist/embed-*
+          if-no-files-found: error
+
+  sandbox:
+    name: sandbox (${{ matrix.slug }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: windows-latest
+            slug: windows-x64
+          - runs-on: ubuntu-latest
+            slug: linux-x64
+          - runs-on: ubuntu-24.04-arm
+            slug: linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: build sandbox launcher
+        run: bun run build:sandbox
+      - name: checksum
+        shell: bash
+        run: |
+          cd build/dist
+          sha256sum "sandbox-${{ matrix.slug }}"* > "sandbox-${{ matrix.slug }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-${{ matrix.slug }}
+          path: |
+            build/dist/sandbox-${{ matrix.slug }}*
+            build/dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: draft github release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [embed, sandbox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: consolidated checksums
+        run: |
+          cd dist
+          cat *.sha256 embed-checksums.txt 2>/dev/null | grep -v checksums > checksums.txt || true
+          rm -f embed-checksums.txt *.sha256
+          sha256sum -c <(grep -v checksums checksums.txt)
+      - name: create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --draft --generate-notes \
+            --title "$TAG" \
+            --notes "Standalone binaries. \`embed-\*: env vars PORT, SSH_KEY, ZAI_API_KEY, WORKSPACE_HOST_DIR (+SSH_DRIVER_LOG). \`sandbox-*\`: boots the Ubuntu VM (sshd on 127.0.0.1:2222, mounts the start directory at /data; SANDBOX_MOUNT_DIR overrides). First sandbox start extracts its archive to the temp dir (~10-20 s). See TESTING.md for the full workflow." \
+            dist/*
