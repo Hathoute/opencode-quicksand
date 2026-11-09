@@ -1,5 +1,6 @@
 /run
 /.quicksand
+/cache
 
 build/dist
 build/opencode

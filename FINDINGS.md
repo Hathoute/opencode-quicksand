@@ -1,6 +1,6 @@
 # Findings — opencode-on-quicksand POC
 
-Working setup: quicksand Ubuntu VM (sshd on host :2222, key auth via `ssh/quicksand_demo`,
+Working setup: quicksand Ubuntu VM (configured SSH port forward, key auth via `ssh/quicksand_demo`,
 host `./data` mounted at `/data`, NetworkMode.FULL) + opencode embedder
 (`run_opencode.ps1` → `poc/embed.ts`) with an SSH workspace driver (`poc/driver.ts`).
 
@@ -123,7 +123,7 @@ QEMU binaries + dist metadata). Four frozen-mode issues, all handled in
 4. **onfile startup cost:** ~351 MB extraction to %TEMP% per launch (~10–20 s).
    Use `--onedir` instead if startup latency matters more than a single file.
 
-Verified: `dist\sandbox.exe` boots the VM, answers ssh on 2222 (banner +
+Verified: `dist\sandbox.exe` boots the VM and answers SSH on its configured host port (banner +
 key auth), and serves the mounted `data/data.txt` through the mount.
 
 ## 8. Streaming: guest commands deliver lines as printed
@@ -311,19 +311,20 @@ sandbox.py mounts its CWD at /data in the guest). PyInstaller lives in a
 
 ## 17. Sandbox initialization is content-addressed
 
-The sandbox no longer installs OpenSSH on every boot. `sandbox.initScript` in
-`config.jsonc` points to a bash file whose exact bytes are SHA-256 hashed. `init:sandbox`
-boots the base Ubuntu image, runs the script, and saves the disk as
-`sandbox.cacheDir/ubuntu-<sha256>`; subsequent starts boot that save.
+The sandbox no longer installs OpenSSH on every boot. `sandbox.image` selects
+the Quicksand base image, while `sandbox.initScript` points to a bash file whose
+exact bytes are SHA-256 hashed. `init:sandbox` boots that base, runs the script,
+and saves the disk as `sandbox.cacheDir/<sandbox.image>-<sha256>`; subsequent
+starts boot that save.
 Changing the script automatically selects a new image. Normal startup only
 refreshes the generated SSH public key and deliberately does not validate
 sshd, so custom scripts own the guest's SSH behavior completely.
 
 Initialization also mounts the script's sibling `init/` directory at
 `/mnt/init`. Quicksand excludes mounts from saves, so those files are not
-persisted unless the script copies them into the guest filesystem. The image
-key remains the init script's hash; changing mounted files alone does not select
-a new image.
+persisted unless the script copies them into the guest filesystem. The saved
+image name combines the configured base-image name with the init script hash;
+changing mounted files alone does not select a new image.
 
 ## 18. Closing the CLI event stream crashed the embedder
 

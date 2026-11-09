@@ -113,13 +113,19 @@ export const toGuest = (value: string, map: PathMap | undefined) => {
  * stream back through the spawner.
  */
 // Exported for streaming tests (poc/stream-test.ts).
-export const sshSpawner = (target: SshTarget, map: PathMap | undefined): ChildProcessSpawner["Service"] =>  make((command) => {
+export const sshSpawner = (
+  target: SshTarget,
+  map: PathMap | undefined,
+  env: Readonly<Record<string, string>> = {},
+): ChildProcessSpawner["Service"] =>
+  make((command) => {
     if (command._tag !== "StandardCommand")
       return Effect.die(new Error("PipedCommand is unsupported in the poc ssh driver"))
 
     const remote: string[] = []
-    for (const [key, value] of Object.entries(command.options.env ?? {}))
-      remote.push(`${key}=${shQuote(value)}`)
+    const variables = Object.entries({ ...env, ...(command.options.env ?? {}) })
+    if (variables.length > 0)
+      remote.push(`export ${variables.map(([key, value]) => `${key}=${shQuote(value)}`).join(" ")};`)
     const cwd = command.options.cwd !== undefined ? toGuest(command.options.cwd, map) : undefined
     if (cwd !== undefined) remote.push(`cd ${shQuote(cwd)} &&`)
     const guest = platform.guestShell(command.command, command.args)
@@ -136,36 +142,57 @@ export const sshSpawner = (target: SshTarget, map: PathMap | undefined): ChildPr
       : ["-o", "StrictHostKeyChecking=no", "-o", `UserKnownHostsFile=${platform.nullKnownHosts}`]
 
     const args = [
-      "ssh", "-T", "-x",
-      "-i", target.keyFile,
-      "-o", "BatchMode=yes",
+      "ssh",
+      "-T",
+      "-x",
+      "-i",
+      target.keyFile,
+      "-o",
+      "BatchMode=yes",
       ...hostKeyArgs,
-      "-p", String(target.port),
+      "-p",
+      String(target.port),
       `${target.user}@${target.host}`,
-      "--", remote.join(" "),
+      "--",
+      remote.join(" "),
     ]
 
-    debug(`spawn: ${remote.join(" ").slice(0, 300)}${remote.join(" ").length > 300 ? " …" : ""} (cwd=${cwd ?? "-"} stdin=${command.options.stdin !== undefined ? "stream" : "closed"})`)
+    debug(
+      `spawn: ${remote.join(" ").slice(0, 300)}${remote.join(" ").length > 300 ? " …" : ""} (cwd=${cwd ?? "-"} stdin=${command.options.stdin !== undefined ? "stream" : "closed"})`,
+    )
     const proc = Bun.spawn(args, { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
     let outBytes = 0
     let errBytes = 0
     const stdout = toStream(proc.stdout, "stdout").pipe(
-      Stream.tap((chunk) => Effect.sync(() => { outBytes += chunk.length })),
+      Stream.tap((chunk) =>
+        Effect.sync(() => {
+          outBytes += chunk.length
+        }),
+      ),
     )
     const stderr = toStream(proc.stderr, "stderr").pipe(
-      Stream.tap((chunk) => Effect.sync(() => { errBytes += chunk.length })),
+      Stream.tap((chunk) =>
+        Effect.sync(() => {
+          errBytes += chunk.length
+        }),
+      ),
     )
 
     // execDefaults.write pipes file bytes through command.options.stdin into a
     // remote `cat > file`: pump the stream into Bun's stdin sink and always
     // close it so the guest sees EOF instead of waiting forever.
-    const pump = command.options.stdin !== undefined
-      ? Stream.runForEach(command.options.stdin, (chunk) =>
-          Effect.sync(() => {
-            try { proc.stdin?.write(chunk) } catch (cause) { debug(`stdin write failed: ${cause}`) }
-          }),
-        )
-      : Effect.void
+    const pump =
+      command.options.stdin !== undefined
+        ? Stream.runForEach(command.options.stdin, (chunk) =>
+            Effect.sync(() => {
+              try {
+                proc.stdin?.write(chunk)
+              } catch (cause) {
+                debug(`stdin write failed: ${cause}`)
+              }
+            }),
+          )
+        : Effect.void
     Effect.runFork(pump.pipe(Effect.onExit(() => Effect.sync(() => proc.stdin?.end()))))
 
     return Effect.succeed(
@@ -173,7 +200,11 @@ export const sshSpawner = (target: SshTarget, map: PathMap | undefined): ChildPr
         pid: ProcessId(proc.pid),
         stdin: Sink.forEach((chunk: Uint8Array) =>
           Effect.sync(() => {
-            try { proc.stdin?.write(chunk) } catch (cause) { debug(`stdin write failed: ${cause}`) }
+            try {
+              proc.stdin?.write(chunk)
+            } catch (cause) {
+              debug(`stdin write failed: ${cause}`)
+            }
           }),
         ),
         stdout,
@@ -181,11 +212,17 @@ export const sshSpawner = (target: SshTarget, map: PathMap | undefined): ChildPr
         all: Stream.merge(stdout, stderr),
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
-        isRunning: Effect.map(Effect.promise(() => proc.exited), () => false),
-        exitCode: Effect.map(Effect.promise(() => proc.exited), (code) => {
-          debug(`exit: pid=${proc.pid} code=${code} stdout=${outBytes}B stderr=${errBytes}B`)
-          return ExitCode(code)
-        }),
+        isRunning: Effect.map(
+          Effect.promise(() => proc.exited),
+          () => false,
+        ),
+        exitCode: Effect.map(
+          Effect.promise(() => proc.exited),
+          (code) => {
+            debug(`exit: pid=${proc.pid} code=${code} stdout=${outBytes}B stderr=${errBytes}B`)
+            return ExitCode(code)
+          },
+        ),
         kill: () =>
           Effect.sync(() => {
             debug(`kill: pid=${proc.pid}`)
@@ -199,8 +236,8 @@ export const sshSpawner = (target: SshTarget, map: PathMap | undefined): ChildPr
 // exec-defaults build every file op as `sh -c <script> sh <path> ...`, so the
 // path is a typed argument at this boundary: translate it before delegation
 // instead of sniffing argv inside the spawner.
-const sshFiles = (target: SshTarget, map: PathMap | undefined): FilesImpl => {
-  const files = execDefaults(sshSpawner(target, map))
+const sshFiles = (target: SshTarget, map: PathMap | undefined, env: Readonly<Record<string, string>>): FilesImpl => {
+  const files = execDefaults(sshSpawner(target, map, env))
   return {
     stat: (value) => files.stat(toGuest(value, map)),
     read: (value, range) => files.read(toGuest(value, map), range),
@@ -212,19 +249,18 @@ const sshFiles = (target: SshTarget, map: PathMap | undefined): FilesImpl => {
   }
 }
 
-export const sshWorkspaceDriver = (target: SshTarget, map?: PathMap): WorkspaceDriver.Interface => ({
+export const sshWorkspaceDriver = (
+  target: SshTarget,
+  map?: PathMap,
+  env: Readonly<Record<string, string>> = {},
+): WorkspaceDriver.Interface => ({
   create: () => Effect.succeed({ binding: { ...target } }),
-  connect: ({ binding }) => {
-    const t = binding as Partial<SshTarget>
-    const resolved: SshTarget =
-      typeof t.host === "string" && typeof t.keyFile === "string"
-        ? { host: t.host, port: Number(t.port), user: t.user ?? target.user, keyFile: t.keyFile }
-        : target
-    // The map comes from the embed env each boot and is stable for a given
-    // sandbox setup, so it stays out of the persisted binding.
+  connect: () => {
+    // Port and path mappings belong to the current VM boot. The persisted
+    // binding may contain an older automatically allocated SSH port.
     return Effect.succeed({
-      spawner: sshSpawner(resolved, map),
-      overrides: sshFiles(resolved, map),
+      spawner: sshSpawner(target, map, env),
+      overrides: sshFiles(target, map, env),
     } satisfies EnvironmentDriver.Driver)
   },
   suspendForIdle: () => Effect.void,

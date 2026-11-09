@@ -16,7 +16,6 @@ await ensureDeps()
 console.log(`poc synced -> ${poc}`)
 
 process.env.SSH_HOST ??= "localhost"
-process.env.SSH_PORT ??= "2222"
 process.env.SSH_KEY ??= SSH_KEY
 process.env.SSH_DRIVER_LOG ??= "1"
 

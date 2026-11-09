@@ -8,7 +8,20 @@
     "port": 14096
   },
   "sandbox": {
+    "image": "ubuntu",
+    "cpus": 1,
+    "memory": "512M",
+    "diskSize": "10G",
     "initScript": "./run/init.sh",
-    "cacheDir": "./.quicksand/sandboxes"
+    "cacheDir": "./.quicksand/sandboxes",
+    "mounts": [
+      { "host": "./cache/.m2", "guest": "/root/.m2" }
+    ],
+    "env": {
+      "MAVEN_OPTS": "-Dmaven.repo.local=/root/.m2"
+    },
+    "portMapping": [
+      { "from": "Host(8080)", "to": "Guest(8080)" }
+    ]
   }
 }

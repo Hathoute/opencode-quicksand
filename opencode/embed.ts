@@ -40,11 +40,17 @@ if (!existsSync(configFile)) throw new Error(`opencode config not found: ${confi
 const cacheDir = runtime.opencode.cacheDir
 mkdirSync(cacheDir, { recursive: true })
 const databaseFile = path.join(cacheDir, "opencode.db")
+const sshPortFile = path.join(runtime.sandbox.cacheDir, "ssh-port")
+if (!existsSync(sshPortFile))
+  throw new Error(`sandbox SSH port file not found: ${sshPortFile}; start the sandbox first`)
+const sshPort = Number((await Bun.file(sshPortFile).text()).trim())
+if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65_535)
+  throw new Error(`invalid sandbox SSH port in ${sshPortFile}`)
 
-// sandbox VM defaults: quicksand ubuntu VM exposing sshd on host 127.0.0.1:2222
+// Quicksand allocates an internal SSH forward and publishes its host port.
 const sshTarget: SshTarget = {
   host: process.env.SSH_HOST ?? "localhost",
-  port: Number(process.env.SSH_PORT ?? 2222),
+  port: sshPort,
   user: process.env.SSH_USER ?? "root",
   keyFile: process.env.SSH_KEY ?? "",
 }
@@ -89,16 +95,16 @@ if (knownHosts !== undefined) {
 }
 const pathMap: PathMap = { host: hostDataDir, guest: "/data" }
 
-// fixed id: adopts the same workspace across embed restarts (workspace.create
-// is idempotent per id+provider; a stale persisted binding keeps the ssh target
-// of the boot that provisioned it)
+// Fixed id: adopts the same logical workspace across embed restarts. The SSH
+// driver deliberately reconnects with this boot's target rather than its
+// persisted binding because the host port is allocated per boot.
 const workspaceID = Workspace.ID.make("wrk_quicksand_ssh")
 
 const program = Effect.gen(function* () {
   const host = yield* Effect.acquireRelease(
     EmbeddedHost.create(
       {
-        workspaceProviders: { ssh: sshWorkspaceDriver(sshTarget, pathMap) },
+        workspaceProviders: { ssh: sshWorkspaceDriver(sshTarget, pathMap, runtime.sandbox.env) },
         config: { directory: configDir },
         database: { path: databaseFile },
       },

@@ -3,8 +3,8 @@
 Three pieces run in this order — each in its **own terminal** so they stay alive:
 
 ```
-[0] bun run init:sandbox    → creates ubuntu-<init-script-sha256> when absent
-[1] bun run start:sandbox   → Ubuntu VM: sshd on 127.0.0.1:2222, launch directory mounted at /data
+[0] bun run init:sandbox    → creates <sandbox.image>-<init-script-sha256> when absent
+[1] bun run start:sandbox   → configured VM: SSH on the first free host port from 52222, launch directory mounted at /data
 [2] bun run start:embed     → opencode embedder on config.jsonc's opencode.port
 [3] opencode run            → drives the agent; every Read/Write/Shell executes in the VM
 ```
@@ -15,8 +15,8 @@ CTRL+C stops the embedder before closing the sandbox gracefully.
 
 ## Host platform support
 
-The guest is always the same Ubuntu VM — it's the **host** that varies. What
-works per host OS today:
+The default template uses the Ubuntu guest; `sandbox.image` can select another
+installed Quicksand image provider. The **host** support matrix is:
 
 | Piece | Windows | Linux | macOS |
 |-------|---------|-------|-------|
@@ -67,17 +67,21 @@ bun run start:sandbox
 ```
 
 - `init:sandbox` hashes the exact init-script bytes. If
-  `sandbox.cacheDir/ubuntu-<sha256>` does not exist, it boots the base
-  Ubuntu image, runs the file with `bash -s`, and saves the resulting disk
+  `sandbox.cacheDir/<sandbox.image>-<sha256>` does not exist, it boots
+  `sandbox.image`, runs the file with `bash -s`, and saves the resulting disk
 - While the script runs, its sibling `init/` directory is mounted at
   `/mnt/init`. Mount contents are not part of the saved image; the script must
   copy required files to the guest filesystem. Changing only mounted files does
   not change the image hash
 - Generates `quicksand/ssh/quicksand_demo` (+`.pub`) on first run and injects the
   pubkey into the VM (key auth, `BatchMode` — no password prompts for the driver)
-- Boots the saved `ubuntu-<sha256>` image with `NetworkMode.FULL`, mounts
-  the launch directory at `/data`, forwards guest 22 → host
-  `127.0.0.1:2222`
+- Boots the saved `<sandbox.image>-<sha256>` image with `NetworkMode.FULL`, mounts
+  the launch directory at `/data`, applies `sandbox.portMapping`, and adds an
+  internal `Host(<first-free-from-52222>)` → `Guest(22)` SSH forward
+- Applies `sandbox.cpus`, `sandbox.memory`, and `sandbox.diskSize` during image
+  initialization and normal boots
+- Creates and mounts every `sandbox.mounts[].host` directory at its guest path,
+  and injects `sandbox.env` into commands routed through the SSH workspace
 - Interactive terminal: waits for **Enter** to stop. Background/CI (stdin EOF):
   holds the VM open for **5 minutes**, then shuts down
 - Wait for `Sandbox is ready:` (boot + key injection). The launcher does not
@@ -88,11 +92,15 @@ Verify (works from any host; with the example config the mount holds the
 project root, so README.md is the sentinel):
 
 ```bash
-ssh -i quicksand/ssh/quicksand_demo -p 2222 \
+SSH_PORT=$(cat .quicksand/sandboxes/ssh-port)
+ssh -i quicksand/ssh/quicksand_demo -p "$SSH_PORT" \
   -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@127.0.0.1 \
   "head -3 /data/README.md"
 # → # opencode-quicksand …
 ```
+
+The runtime file exists while the sandbox is running and contains its
+automatically selected SSH host port.
 
 (`accept-new` keeps the first connection non-interactive: a fresh host has no
 known_hosts entry yet, and `BatchMode` alone would turn the host-key prompt
@@ -182,7 +190,8 @@ Verify results from both sides (the guest-side ssh check works from any host):
 # host side
 Get-Content README.md -TotalCount 3
 # guest side
-ssh -i quicksand/ssh/quicksand_demo -p 2222 root@127.0.0.1 "head -3 /data/README.md; wc -c /data/README.md"
+$SshPort = Get-Content .quicksand/sandboxes/ssh-port
+ssh -i quicksand/ssh/quicksand_demo -p $SshPort root@127.0.0.1 "head -3 /data/README.md; wc -c /data/README.md"
 ```
 
 ## 4. Driver-level streaming check (no opencode needed)
@@ -191,7 +200,7 @@ ssh -i quicksand/ssh/quicksand_demo -p 2222 root@127.0.0.1 "head -3 /data/README
 # repo root — SSH_KEY must be absolute because the script runs from build/opencode
 export SSH_KEY="$PWD/quicksand/ssh/quicksand_demo"
 cd build/opencode   # the pinned checkout (populated by bun run start:embed)
-bun poc/stream-test.ts
+bun poc/stream-test.ts --config ../../config.jsonc
 # lines must arrive ~2s apart, not in one burst at exit
 ```
 
@@ -199,11 +208,11 @@ bun poc/stream-test.ts
 # repo root — SSH_KEY must be absolute because the script runs from build/opencode
 $env:SSH_KEY = "$PWD\quicksand\ssh\quicksand_demo"
 cd build\opencode
-bun poc/stream-test.ts
+bun poc/stream-test.ts --config ..\..\config.jsonc
 ```
 
 The sandbox must be running (this talks to the VM directly). A one-time
-`Warning: Permanently added '[localhost]:2222' …` on stderr means the
+`Warning: Permanently added '[localhost]:<host-port>' …` on stderr means the
 embedder hasn't pinned the host key yet (`quicksand/ssh/known_hosts` absent) —
 harmless; start the embedder once with the sandbox up to silence it.
 
@@ -229,7 +238,8 @@ bun run build:all
   the compiled linux-x64 binary
   served an agent session whose tools executed inside the VM
 - `sandbox-*` (~330 MB): PyInstaller onefile in the uv-managed `build`
-  dependency-group (interpreter + quicksand + Ubuntu image + QEMU binaries).
+  dependency-group (interpreter + quicksand + Ubuntu image + QEMU binaries;
+  other `sandbox.image` providers must also be packaged to work standalone).
   PyInstaller cannot cross-compile — build on the target platform. Place
   `config.jsonc` in the start directory (or pass `--config <file>`), run once
   with `--init`, then run normally. It creates `ssh/` next to itself and mounts
@@ -247,10 +257,10 @@ bun run build:all
 |---------|-------------|
 | `sandbox.initScript does not exist` | fix the path in `config.jsonc`; relative paths resolve from the config file |
 | `sandbox init mount does not exist` | create an `init/` directory beside `sandbox.initScript` |
-| `Image not found: ubuntu-...` | run `bun run init:sandbox` before `start:sandbox`, or use `start:opencode` |
+| `Image not found: ...` | run `bun run init:sandbox` before `start:sandbox`, or use `start:opencode` |
 | `Host key verification failed` on the first manual `ssh` (under `BatchMode`) | fresh host: no known_hosts entry yet — add `-o StrictHostKeyChecking=accept-new` (as in the step 1 verify) |
-| Every driver call logs `Warning: Permanently added '[localhost]:2222'`; embedder logged `ssh-keyscan got no host key` | IPv6-first `localhost` + forward bound to 127.0.0.1 (FINDINGS.md #13); fixed in `embed.ts` — resync + restart the embedder with the sandbox up |
-| Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — clear the stale user entry: `ssh-keygen -R "[127.0.0.1]:2222"` (the driver is unaffected: the embedder re-pins `quicksand/ssh/known_hosts` each boot) |
+| Every driver call logs `Warning: Permanently added '[localhost]:<host-port>'`; embedder logged `ssh-keyscan got no host key` | IPv6-first `localhost` + forward bound to 127.0.0.1 (FINDINGS.md #13); fixed in `embed.ts` — resync + restart the embedder with the sandbox up |
+| Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — read `ssh-port` under `sandbox.cacheDir`, then clear it with `ssh-keygen -R "[127.0.0.1]:<host-port>"` (the driver re-pins `quicksand/ssh/known_hosts` each boot) |
 | MCP server spawn exits 127 in the guest (e.g. `/…/browse mcp`) | host-installed MCP binaries don't exist in the VM (FINDINGS.md #14); harmless for Read/Write/Shell |
 | `uv: command not found` during start/build | install uv (see prerequisites) — it also manages the Python interpreter, so no system python is needed |
 | `Model unavailable: provider/model` | configure the model/provider in the `opencode.jsonc` under `opencode.configDir` (FINDINGS.md #1) |

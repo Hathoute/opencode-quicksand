@@ -60,7 +60,7 @@ first and then closes the sandbox gracefully.
 # one-time runtime setup (run/ is gitignored)
 cp -R run-template run
 
-# 1) initialize the image, then start the VM: sshd on 127.0.0.1:2222
+# 1) initialize the image, then start the VM on sandbox.portMapping
 bun run init:sandbox
 bun run start:sandbox
 
@@ -103,9 +103,9 @@ bun run build:all
 
 | Command | What it does |
 |---------|--------------|
-| `bun run init:sandbox` | hashes `sandbox.initScript`, mounts its sibling `init/` at `/mnt/init`, and creates `sandbox.cacheDir/ubuntu-<sha256>` when absent |
+| `bun run init:sandbox` | hashes `sandbox.initScript`, mounts its sibling `init/` at `/mnt/init`, and creates `sandbox.cacheDir/<sandbox.image>-<sha256>` when absent |
 | `bun run start:opencode` | initializes and starts the sandbox, waits for readiness, then starts the embedder; CTRL+C stops both in order |
-| `bun run start:sandbox` | boots the matching `ubuntu-<sha256>` image (interactive: Enter stops; CI: 5-min hold) |
+| `bun run start:sandbox` | boots the matching `<sandbox.image>-<sha256>` image (interactive: Enter stops; CI: 5-min hold) |
 | `bun run start:embed` | fetches `opencode.tag`, syncs `opencode/*.ts` → `build/opencode/poc`, installs dependencies, and starts the embedder |
 | `bun run build:embed` | compiles `embed-<target>` for `EMBED_TARGET` (windows-x64, linux-x64, linux-arm64; default: host) |
 | `bun run build:sandbox` | `uv sync --frozen --group build`, then PyInstaller onefile as `sandbox-<os>-<arch>` |
@@ -127,8 +127,15 @@ versioned.
 | `opencode.cacheDir` | persistent embedder state (`opencode.db`) |
 | `opencode.tag` | Git tag, branch, or commit fetched for the pinned checkout |
 | `opencode.port` | embedder HTTP port |
+| `sandbox.image` | Quicksand base image used during initialization (defaults to `ubuntu`; its provider must be installed) |
+| `sandbox.cpus` | number of virtual CPUs (positive integer; default `1`) |
+| `sandbox.memory` | guest memory size accepted by Quicksand (default `512M`) |
+| `sandbox.diskSize` | guest disk size accepted by Quicksand (default `10G`) |
 | `sandbox.initScript` | bash file whose SHA-256 selects the saved image |
 | `sandbox.cacheDir` | directory containing content-addressed sandbox images |
+| `sandbox.mounts` | additional host/guest directory mounts; relative host paths resolve from `config.jsonc` and are created automatically |
+| `sandbox.env` | default environment variables injected into every SSH-routed tool command |
+| `sandbox.portMapping` | list of non-SSH Quicksand forwards such as `{ "from": "Host(8080)", "to": "Guest(8080)" }`; SSH automatically uses the first free host port from `52222` |
 
 The directory where `run_opencode` is invoked is always mounted at `/data` and
 used as the OpenCode workspace.
@@ -136,7 +143,8 @@ used as the OpenCode workspace.
 During `init:sandbox`, the directory named `init` beside `sandbox.initScript`
 is mounted at `/mnt/init`. It is a host mount and is **not** persisted in the
 saved image; the script must copy anything it needs to retain onto the guest
-filesystem. Only the script bytes affect the image hash.
+filesystem. Additional `sandbox.mounts` are also available but are likewise not
+persisted. Only the script bytes affect the image hash.
 
 `EMBED_TARGET` remains an optional build-only override for cross-compilation.
 
