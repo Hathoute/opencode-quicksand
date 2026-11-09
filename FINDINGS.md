@@ -4,7 +4,7 @@ Working setup: quicksand Ubuntu VM (sshd on host :2222, key auth via `ssh/quicks
 host `./data` mounted at `/data`, NetworkMode.FULL) + opencode embedder
 (`run_opencode.ps1` → `poc/embed.ts`) with an SSH workspace driver (`poc/driver.ts`).
 
-## 1. Embedded host can't see global credentials (in-memory DB)
+## 1. Embedded host defaults to an isolated in-memory database
 
 **Symptom:** `opencode run --server http://localhost:4096` reports that the
 configured model is unavailable, even though the normal opencode installation
@@ -15,14 +15,15 @@ has an active stored credential.
 normal global DB (`~/.local/share/opencode/opencode.db`, migrated from legacy
 `auth.json`) are therefore invisible to the embedder.
 
-**Fix (applied):** require `OPENCODE_CONFIG_DIR` and pass it through
-`ServerOptions.config.directory`. The directory contains `opencode.jsonc`, which
-defines the model and provider authentication (including `{env:...}` or
-`{file:...}` substitutions). This also preserves OpenCode's native JSONC parsing,
-supplementary config directories, and config watching.
+**Fix (applied):**
 
-**Alternative:** pass `database: { path: "<global>/opencode.db" }` in
-`EmbeddedHost.create` options to share the global store.
+- require `OPENCODE_CONFIG_DIR` and pass it through
+  `ServerOptions.config.directory`. Its `opencode.jsonc` defines the model and
+  provider authentication (including `{env:...}` or `{file:...}` substitutions)
+  while preserving native JSONC parsing, supplementary directories, and watching
+- require `OPENCODE_CACHE_DIR` and pass
+  `database: { path: "<OPENCODE_CACHE_DIR>/opencode.db" }` to
+  `EmbeddedHost.create`, replacing `:memory:` with persistent SQLite state
 
 ## 2. Session placement fails for CLI-created sessions (event envelope shape)
 

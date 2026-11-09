@@ -29,6 +29,7 @@ session, config discovery, and the mounted `data/` directory stay on the host.
 - the `opencode` CLI on PATH (for `opencode run` testing)
 - an `OPENCODE_CONFIG_DIR` containing `opencode.jsonc` with your model and
   provider authentication configured (set `"shell": "bash"` for the guest)
+- a writable `OPENCODE_CACHE_DIR` for the embedder's persistent SQLite database
 
 ## Quickstart (three terminals)
 
@@ -38,6 +39,7 @@ bun run start:sandbox
 
 # 2) opencode embedder on http://localhost:4096 (first run: clone + bun install)
 export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
+export OPENCODE_CACHE_DIR="$PWD/run/cache"
 bun run start:embed
 
 # 3) drive the configured model — every command runs inside the VM
@@ -45,9 +47,8 @@ opencode run --server http://localhost:4096 --auto \
   "Run the shell command: hostname && uname -a && head -5 /data/README.md"
 ```
 
-(Windows: `$env:OPENCODE_CONFIG_DIR = "$HOME\.config\opencode"` and backtick
-line continuations — see TESTING.md for per-shell variants and the
-host-platform support table.)
+(Windows: also set `$env:OPENCODE_CACHE_DIR = "$PWD\run\cache"`; see TESTING.md
+for per-shell variants and the host-platform support table.)
 
 ## Packaging (standalone executables)
 
@@ -64,8 +65,8 @@ bun run build:all
   `build/build-embed-exe.ts`). Cross-compiles every target from one host; the
   pty binary of the *target* platform is force-installed and embedded via the
   same plugin upstream uses. Needs env vars:
-  `PORT`, `SSH_KEY`, `OPENCODE_CONFIG_DIR`, `WORKSPACE_HOST_DIR`, optional
-  `SSH_DRIVER_LOG`.
+  `PORT`, `SSH_KEY`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CACHE_DIR`,
+  `WORKSPACE_HOST_DIR`, optional `SSH_DRIVER_LOG`.
 - `sandbox-*` (~330 MB): PyInstaller onefile with interpreter + deps + Ubuntu
   image + QEMU binaries, built in the uv-managed `build` dependency-group.
   PyInstaller cannot cross-compile — build on the target platform (CI does).
@@ -87,7 +88,8 @@ bun run build:all
 
 | Variable | Default | Used by |
 |----------|---------|---------|
-| `OPENCODE_CONFIG_DIR` | — (required; must contain `opencode.jsonc`) | embedder model/provider config (the DB is in-memory, so stored auth is not inherited) |
+| `OPENCODE_CONFIG_DIR` | — (required; must contain `opencode.jsonc`) | embedder model/provider config |
+| `OPENCODE_CACHE_DIR` | — (required) | embedder state (`opencode.db` SQLite database) |
 | `SANDBOX_MOUNT_DIR` | caller's CWD | sandbox: host directory mounted at `/data` |
 | `OPENCODE_COMMIT` | `ced73dc0…` (pinned) | checkout pin; falls back to the sibling `../opencode` checkout's HEAD when present |
 | `EMBED_TARGET` | host platform | `build:embed` cross-compile target |

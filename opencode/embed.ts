@@ -1,5 +1,5 @@
 import { Context, Effect, Stream } from "effect"
-import { existsSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import path from "path"
 import { EmbeddedHost } from "../packages/sdk/src/internal/host"
 import { Bus } from "../packages/core/src/bus"
@@ -11,10 +11,8 @@ import type { PathMap, SshTarget } from "./driver"
 
 const port = Number(process.env.PORT ?? 4096)
 
-// The embedded host uses an isolated in-memory database, so it cannot inherit
-// provider credentials from the caller's normal opencode installation. Load
-// the complete config (including provider/model settings) from an explicit
-// directory instead. Resolving here also makes relative paths work for the
+// Load the complete config (including provider/model settings) from an
+// explicit directory. Resolving here also makes relative paths work for the
 // standalone executable; build/start-embed.ts resolves them before changing
 // the child process cwd.
 const configDirValue = process.env.OPENCODE_CONFIG_DIR?.trim()
@@ -22,6 +20,14 @@ if (!configDirValue) throw new Error("OPENCODE_CONFIG_DIR is required and must c
 const configDir = path.resolve(configDirValue)
 const configFile = path.join(configDir, "opencode.jsonc")
 if (!existsSync(configFile)) throw new Error(`opencode config not found: ${configFile}`)
+
+// EmbeddedHost defaults to an isolated in-memory database. Keep sessions,
+// credentials, and other server state in a persistent SQLite database instead.
+const cacheDirValue = process.env.OPENCODE_CACHE_DIR?.trim()
+if (!cacheDirValue) throw new Error("OPENCODE_CACHE_DIR is required")
+const cacheDir = path.resolve(cacheDirValue)
+mkdirSync(cacheDir, { recursive: true })
+const databaseFile = path.join(cacheDir, "opencode.db")
 
 // sandbox VM defaults: quicksand ubuntu VM exposing sshd on host 127.0.0.1:2222
 const sshTarget: SshTarget = {
@@ -92,6 +98,7 @@ const program = Effect.gen(function* () {
     EmbeddedHost.create({
       workspaceProviders: { ssh: sshWorkspaceDriver(sshTarget, pathMap) },
       config: { directory: configDir },
+      database: { path: databaseFile },
     }),
     (host) => Effect.promise(host.close),
   )
@@ -147,6 +154,7 @@ const program = Effect.gen(function* () {
   console.log(
     `ssh target: ${sshTarget.user}@${sshTarget.host}:${sshTarget.port} (key: ${sshTarget.keyFile || "none"})`,
   )
+  console.log(`database: ${databaseFile}`)
 
   // Provision the ssh-backed workspace up front (idempotent per id+provider).
   // Sessions placed into it connect lazily when their tools execute; no boot

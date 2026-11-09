@@ -13,6 +13,10 @@ const configFile = path.join(configDir, "opencode.jsonc")
 if (!existsSync(configFile)) throw new Error(`opencode config not found: ${configFile}`)
 process.env.OPENCODE_CONFIG_DIR = configDir
 
+const cacheDirValue = process.env.OPENCODE_CACHE_DIR?.trim()
+if (!cacheDirValue) throw new Error("OPENCODE_CACHE_DIR is required")
+process.env.OPENCODE_CACHE_DIR = path.resolve(cacheDirValue)
+
 await ensureRepo()
 const poc = syncPoc()
 await ensureDeps()
