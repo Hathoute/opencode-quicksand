@@ -113,9 +113,21 @@ const program = Effect.gen(function* () {
   // pass through to the default handler; the bus sweep below remains the
   // fallback for anything that still slips out implicit-local.
   const createInWorkspace = async (request: Request) => {
-    const pass = () => host.fetch(request)
-    if (hostDataDir === undefined) return pass()
     const url = new URL(request.url)
+    // The CLI closes its SSE subscription after every non-interactive run.
+    // Bun reports that normal socket close by aborting the inbound Request with
+    // "The connection was closed". Passing the signal into OwnedFetch makes it
+    // error the response stream, which Bun treats as an unhandled rejection and
+    // terminates the embedder. Give only the SSE route a transport-independent
+    // signal; cancellation of the returned response body still propagates to
+    // EmbeddedHost and releases the subscription.
+    const pass = () =>
+      host.fetch(
+        url.pathname === "/api/event"
+          ? new Request(request, { signal: new AbortController().signal })
+          : request,
+      )
+    if (hostDataDir === undefined) return pass()
     if (request.method !== "POST" || url.pathname !== "/api/session") return pass()
     const payload = (await request.clone().json().catch(() => undefined)) as
       | { parentID?: string; id?: string; title?: string; agent?: string; model?: string; metadata?: unknown; permissions?: unknown; location?: { directory?: string } }

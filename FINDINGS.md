@@ -318,3 +318,18 @@ boots the base Ubuntu image, runs the script, and saves the disk as
 Changing the script automatically selects a new image. Normal startup only
 refreshes the generated SSH public key and deliberately does not validate
 sshd, so custom scripts own the guest's SSH behavior completely.
+
+## 18. Closing the CLI event stream crashed the embedder
+
+**Symptom:** `opencode run` completed successfully, then `poc/embed.ts` exited
+with `AbortError: The connection was closed` as soon as the CLI disconnected.
+
+**Root cause:** the CLI intentionally aborts its `/api/event` SSE subscription
+after a non-interactive run. Bun represents the closed socket by aborting the
+inbound `Request`; forwarding that signal into SDK `OwnedFetch` errors the
+response body, which Bun reports as an unhandled rejection and treats as fatal.
+
+**Fix (applied):** `/api/event` is forwarded with a fresh request signal.
+Cancelling Bun's returned response body still cancels the embedded stream and
+releases the subscription, but the expected socket close no longer becomes a
+server exception. Other endpoints retain their original abort propagation.

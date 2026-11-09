@@ -260,6 +260,7 @@ bun run build:all
 | `uv: command not found` during start/build | install uv (see prerequisites) — it also manages the Python interpreter, so no system python is needed |
 | `Model unavailable: provider/model` | configure the model and provider authentication in `OPENCODE_CONFIG_DIR/opencode.jsonc` (FINDINGS.md #1) |
 | `Transport: ECONNRESET` mid-session | embedder started with old `embed.ts` (no `idleTimeout: 255`); restart via `bun run start:embed` (FINDINGS.md #2c) |
+| Embedder exits with `AbortError: The connection was closed` after a successful run | old `embed.ts` forwarded the CLI's expected `/api/event` disconnect as a response error; resync and restart (FINDINGS.md #18) |
 | Session not placed (`session undefined`) | old `embed.ts` without the `event.data.sessionID` fix; resync + restart |
 | `command not found` for a Windows path in the guest (Windows) | old `driver.ts` without `guestShell()`; resync + restart |
 | Tool call fails with `Portable shell scanner cannot analyze command: invalid-structure` | prompt asked the model to run a `;` chain with unicode punctuation (FINDINGS.md #12); use single commands or `&&` chains |
