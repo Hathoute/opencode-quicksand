@@ -4,8 +4,8 @@ Three pieces run in this order — each in its **own terminal** so they stay ali
 
 ```
 [0] bun run init:sandbox    → creates ubuntu-<init-script-sha256> when absent
-[1] bun run start:sandbox   → Ubuntu VM: sshd on 127.0.0.1:2222, caller's CWD mounted at /data
-[2] bun run start:embed     → opencode embedder (SDK server) on http://localhost:4096
+[1] bun run start:sandbox   → Ubuntu VM: sshd on 127.0.0.1:2222, sandbox.mountDir mounted at /data
+[2] bun run start:embed     → opencode embedder on config.jsonc's opencode.port
 [3] opencode run            → drives the agent; every Read/Write/Shell executes in the VM
 ```
 
@@ -43,30 +43,25 @@ Prerequisites (one-time):
 - OpenSSH client on PATH (`ssh`, `ssh-keygen`, `ssh-keyscan`) — Windows: the
   "OpenSSH Client" optional capability · Linux: `openssh-client` · macOS: built in
 - the `opencode` CLI on PATH (for step 3)
-- an `OPENCODE_CONFIG_DIR` containing `opencode.jsonc` with a working model and
-  provider authentication; include `"shell": "bash"` so shell commands target
-  the Linux guest
-- a writable `OPENCODE_CACHE_DIR` for the embedder's persistent SQLite database
-- a `SANDBOX_INIT_SCRIPT` bash file; the provided `quicksand/init.sh` installs
-  and enables OpenSSH
+- a valid `config.jsonc`; its `opencode.configDir` must contain an
+  `opencode.jsonc` with a working model/provider and `"shell": "bash"`
+- `run/` copied from the tracked template once: `cp -R run-template run`
 
 ---
 
 ## 1. Start the ssh server (quicksand VM)
 
 From the repo root (wherever you cloned it — same command in bash and
-PowerShell; `bun run` executes scripts from the project root, and the VM
-mounts that directory at `/data`):
+PowerShell; the VM mounts `sandbox.mountDir` at `/data`):
 
 ```bash
 cd opencode-quicksand
-export SANDBOX_INIT_SCRIPT="$PWD/quicksand/init.sh"
+cp -R run-template run   # first setup only; run/ is gitignored
 bun run init:sandbox
 bun run start:sandbox
 ```
 
 ```powershell
-$env:SANDBOX_INIT_SCRIPT = "$PWD\quicksand\init.sh"
 bun run init:sandbox
 bun run start:sandbox
 ```
@@ -74,19 +69,23 @@ bun run start:sandbox
 - `init:sandbox` hashes the exact init-script bytes. If
   `.quicksand/sandboxes/ubuntu-<sha256>` does not exist, it boots the base
   Ubuntu image, runs the file with `bash -s`, and saves the resulting disk
+- While the script runs, its sibling `init/` directory is mounted at
+  `/mnt/init`. Mount contents are not part of the saved image; the script must
+  copy required files to the guest filesystem. Changing only mounted files does
+  not change the image hash
 - Generates `quicksand/ssh/quicksand_demo` (+`.pub`) on first run and injects the
   pubkey into the VM (key auth, `BatchMode` — no password prompts for the driver)
-- Boots the saved `ubuntu-<sha256>` image with `NetworkMode.FULL`, mounts **the directory you run it from**
-  (the project root when invoked via `bun run start:sandbox`; override with
-  `SANDBOX_MOUNT_DIR`) at `/data`, forwards guest 22 → host `127.0.0.1:2222`
+- Boots the saved `ubuntu-<sha256>` image with `NetworkMode.FULL`, mounts
+  `sandbox.mountDir` at `/data`, forwards guest 22 → host
+  `127.0.0.1:2222`
 - Interactive terminal: waits for **Enter** to stop. Background/CI (stdin EOF):
   holds the VM open for **5 minutes**, then shuts down
 - Wait for `Sandbox is ready:` (boot + key injection). The launcher does not
   validate sshd; removing OpenSSH from the init script causes the SSH driver to
   fail later as expected.
 
-Verify (works from any host; the mount now holds the project root, so README.md
-is the sentinel — forward slashes are fine in PowerShell too):
+Verify (works from any host; with the example config the mount holds the
+project root, so README.md is the sentinel):
 
 ```bash
 ssh -i quicksand/ssh/quicksand_demo -p 2222 \
@@ -101,18 +100,14 @@ into a hard `Host key verification failed`.)
 
 ## 2. Start the opencode embed server
 
-Set the config and cache directories, then start — any host. Relative paths are
-resolved from the directory where `bun run start:embed` is invoked:
+Configure `opencode.configDir`, `opencode.cacheDir`, and `opencode.port` in
+`config.jsonc`, then start on any host:
 
 ```bash
-export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"     # bash (Linux / macOS)
-export OPENCODE_CACHE_DIR="$PWD/run/cache"
 bun run start:embed
 ```
 
 ```powershell
-$env:OPENCODE_CONFIG_DIR = "$HOME\.config\opencode"   # PowerShell (Windows)
-$env:OPENCODE_CACHE_DIR = "$PWD\run\cache"
 bun run start:embed
 ```
 
@@ -120,16 +115,15 @@ What it does: fetches the opencode checkout at the pinned commit into
 `build/opencode` (reuses an existing clone), syncs `opencode/*.ts` into its
 `poc/`, `bun install --frozen-lockfile`, creates the `effect` junction (a
 plain symlink on Linux/macOS), then runs `bun poc/embed.ts` → server on
-`http://localhost:4096` (loads `OPENCODE_CONFIG_DIR/opencode.jsonc`, persists
-state in `OPENCODE_CACHE_DIR/opencode.db`, and sets `SSH_*`,
-`WORKSPACE_HOST_DIR`, `SSH_DRIVER_LOG=1`).
+the configured port (loads `opencode.configDir/opencode.jsonc`, persists state
+in `opencode.cacheDir/opencode.db`, and uses `sandbox.mountDir` as the workspace).
 
 Ready when you see:
 
 ```
-opencode embedder listening on http://localhost:4096
-database: ...<your OPENCODE_CACHE_DIR>/opencode.db
-placing sessions into ssh workspace wrk_quicksand_ssh at ...<your CWD>
+opencode embedder listening on http://localhost:<opencode.port>
+database: ...<opencode.cacheDir>/opencode.db
+placing sessions into ssh workspace wrk_quicksand_ssh at ...<sandbox.mountDir>
 ```
 
 Stop with CTRL+C (kills the whole bun/ssh child tree). `SSH_DRIVER_LOG=1` traces
@@ -140,13 +134,13 @@ every ssh invocation: remote command line, cwd, stdin mode, exit code + bytes.
 Verified on Windows and Linux hosts (macOS adapter implemented, untested):
 
 ```powershell
-opencode run --server http://localhost:4096 --auto `
+opencode run --server http://localhost:14096 --auto `
   "Run 'uname -r' and create a file sandbox-test.txt in the working directory `
   whose single line is that kernel version. Show me the final file content."
 ```
 
 ```bash
-opencode run --server http://localhost:4096 --auto \
+opencode run --server http://localhost:14096 --auto \
   "Run 'uname -r' and create a file sandbox-test.txt in the working directory whose single line is that kernel version. Show me the final file content."
 ```
 
@@ -167,7 +161,7 @@ rm sandbox-test.txt
 - `--auto` auto-approves tool permissions
 - The kernel version must be the **guest's** (`6.8.0-147-generic` for the
   current image) — if you see the host kernel, the session leaked (FINDINGS.md #11)
-- Session cwd is the mounted host directory (project root); use host-relative
+- Session cwd is `sandbox.mountDir`; use host-relative
   or guest-native paths in prompts. On **Windows** hosts bare `/data/...`
   gets reinterpreted as `C:\data\...` by the host tool layer (FINDINGS.md);
   on POSIX hosts guest-native paths pass through unchanged
@@ -175,10 +169,10 @@ rm sandbox-test.txt
 Useful test prompts:
 
 ```powershell
-# commands execute inside the VM (hostname/uname prove it; /data = your CWD).
+# commands execute inside the VM (hostname/uname prove it; /data = sandbox.mountDir).
 # Avoid `;` chains + unicode punctuation in run instructions — the portable
 # shell scanner rejects them (FINDINGS.md #12). Use && chains instead.
-opencode run --server http://localhost:4096 --auto `
+opencode run --server http://localhost:14096 --auto `
   "Run the shell command: hostname && whoami && uname -a && head -3 /data/README.md"
 ```
 
@@ -230,17 +224,17 @@ bun run build:all
   on Bun 1.4.4, and machine-code AOT cannot cross-compile; notes in
   `build/build-embed-exe.ts`). Cross-compiles every target from one host; the
   pty binary of the *target* platform is force-installed and embedded
-  (upstream's technique). Runs with `PORT`, `SSH_KEY`, `OPENCODE_CONFIG_DIR`,
-  `OPENCODE_CACHE_DIR`, `WORKSPACE_HOST_DIR` (+ optional `SSH_DRIVER_LOG`) — no
-  repo, bun or node_modules needed. Verified end-to-end: the compiled linux-x64 binary
+  (upstream's technique). Reads `config.jsonc` from its start directory or
+  `--config <file>` — no repo, bun or node_modules needed. Verified end-to-end:
+  the compiled linux-x64 binary
   served an agent session whose tools executed inside the VM
 - `sandbox-*` (~330 MB): PyInstaller onefile in the uv-managed `build`
   dependency-group (interpreter + quicksand + Ubuntu image + QEMU binaries).
-  PyInstaller cannot cross-compile — build on the target platform. Set
-  `SANDBOX_INIT_SCRIPT`, run the executable once with `--init`, then run it
-  normally. It creates `ssh/` next to itself and mounts its start directory at
-  `/data` (`SANDBOX_MOUNT_DIR` overrides). First start extracts the archive to
-  the temp dir (~10-20 s)
+  PyInstaller cannot cross-compile — build on the target platform. Place
+  `config.jsonc` in the start directory (or pass `--config <file>`), run once
+  with `--init`, then run normally. It creates `ssh/` next to itself and mounts
+  `sandbox.mountDir` at `/data`. First start extracts the archive to the temp
+  dir (~10-20 s)
 - Release CI (`.github/workflows/release.yml`): push a `v*` tag → draft
   GitHub Release with `embed-{windows-x64.exe,linux-x64,linux-arm64,
   macos-arm64}` (one Linux runner, cross-compiled) +
@@ -251,14 +245,15 @@ bun run build:all
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `SANDBOX_INIT_SCRIPT is required` / `does not exist` | set it to an existing bash file, e.g. `quicksand/init.sh` |
+| `sandbox.initScript does not exist` | fix the path in `config.jsonc`; relative paths resolve from the config file |
+| `sandbox init mount does not exist` | create an `init/` directory beside `sandbox.initScript` |
 | `Image not found: ubuntu-...` | run `bun run init:sandbox` before `start:sandbox`, or use `start:opencode` |
 | `Host key verification failed` on the first manual `ssh` (under `BatchMode`) | fresh host: no known_hosts entry yet — add `-o StrictHostKeyChecking=accept-new` (as in the step 1 verify) |
 | Every driver call logs `Warning: Permanently added '[localhost]:2222'`; embedder logged `ssh-keyscan got no host key` | IPv6-first `localhost` + forward bound to 127.0.0.1 (FINDINGS.md #13); fixed in `embed.ts` — resync + restart the embedder with the sandbox up |
 | Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — clear the stale user entry: `ssh-keygen -R "[127.0.0.1]:2222"` (the driver is unaffected: the embedder re-pins `quicksand/ssh/known_hosts` each boot) |
 | MCP server spawn exits 127 in the guest (e.g. `/…/browse mcp`) | host-installed MCP binaries don't exist in the VM (FINDINGS.md #14); harmless for Read/Write/Shell |
 | `uv: command not found` during start/build | install uv (see prerequisites) — it also manages the Python interpreter, so no system python is needed |
-| `Model unavailable: provider/model` | configure the model and provider authentication in `OPENCODE_CONFIG_DIR/opencode.jsonc` (FINDINGS.md #1) |
+| `Model unavailable: provider/model` | configure the model/provider in the `opencode.jsonc` under `opencode.configDir` (FINDINGS.md #1) |
 | `Transport: ECONNRESET` mid-session | embedder started with old `embed.ts` (no `idleTimeout: 255`); restart via `bun run start:embed` (FINDINGS.md #2c) |
 | Embedder exits with `AbortError: The connection was closed` after a successful run | old `embed.ts` forwarded the CLI's expected `/api/event` disconnect as a response error; resync and restart (FINDINGS.md #18) |
 | Session not placed (`session undefined`) | old `embed.ts` without the `event.data.sessionID` fix; resync + restart |

@@ -4,13 +4,11 @@
 import { existsSync, statSync } from "node:fs"
 import path from "path"
 import { PROJECT_ROOT } from "./common"
+import { config } from "./config"
 
-const initScriptValue = process.env.SANDBOX_INIT_SCRIPT?.trim()
-if (!initScriptValue) throw new Error("SANDBOX_INIT_SCRIPT is required")
-const initScript = path.resolve(initScriptValue)
+const initScript = config.sandbox.initScript
 if (!existsSync(initScript) || !statSync(initScript).isFile())
-  throw new Error(`SANDBOX_INIT_SCRIPT does not exist or is not a file: ${initScript}`)
-process.env.SANDBOX_INIT_SCRIPT = initScript
+  throw new Error(`sandbox.initScript does not exist or is not a file: ${initScript}`)
 
 let initializer: ReturnType<typeof startInitSandbox> | undefined
 let sandbox: ReturnType<typeof startSandbox> | undefined

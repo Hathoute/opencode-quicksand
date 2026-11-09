@@ -12,7 +12,6 @@ export const DIST_DIR = path.join(PROJECT_ROOT, "build", "dist")
 export const SANDBOX_DIR = path.join(PROJECT_ROOT, "quicksand")
 export const SSH_KEY = path.join(SANDBOX_DIR, "ssh", "quicksand_demo")
 
-export const DEFAULT_COMMIT = "ced73dc0f6c5b00c3a085b1d7b11ea31f790c5df"
 export const REPO_URL = "https://github.com/anomalyco/opencode.git"
 
 /** Release-artifact platform slug: <os>-<arch> (windows-x64, linux-arm64, …). */

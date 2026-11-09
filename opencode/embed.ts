@@ -8,24 +8,27 @@ import { SessionEvent } from "../packages/schema/src/session-event"
 import type { Session } from "../packages/schema/src/session"
 import { sshWorkspaceDriver } from "./driver"
 import type { PathMap, SshTarget } from "./driver"
+import { loadRuntimeConfig } from "./runtime-config"
 
-const port = Number(process.env.PORT ?? 4096)
+const configArgument = process.argv.indexOf("--config")
+if (configArgument !== -1 && process.argv[configArgument + 1] === undefined)
+  throw new Error("--config requires a file path")
+const runtime = await loadRuntimeConfig(
+  configArgument === -1 ? path.resolve("config.jsonc") : process.argv[configArgument + 1],
+)
+const port = runtime.opencode.port
 
 // Load the complete config (including provider/model settings) from an
 // explicit directory. Resolving here also makes relative paths work for the
 // standalone executable; build/start-embed.ts resolves them before changing
 // the child process cwd.
-const configDirValue = process.env.OPENCODE_CONFIG_DIR?.trim()
-if (!configDirValue) throw new Error("OPENCODE_CONFIG_DIR is required and must contain opencode.jsonc")
-const configDir = path.resolve(configDirValue)
+const configDir = runtime.opencode.configDir
 const configFile = path.join(configDir, "opencode.jsonc")
 if (!existsSync(configFile)) throw new Error(`opencode config not found: ${configFile}`)
 
 // EmbeddedHost defaults to an isolated in-memory database. Keep sessions,
 // credentials, and other server state in a persistent SQLite database instead.
-const cacheDirValue = process.env.OPENCODE_CACHE_DIR?.trim()
-if (!cacheDirValue) throw new Error("OPENCODE_CACHE_DIR is required")
-const cacheDir = path.resolve(cacheDirValue)
+const cacheDir = runtime.opencode.cacheDir
 mkdirSync(cacheDir, { recursive: true })
 const databaseFile = path.join(cacheDir, "opencode.db")
 
@@ -37,12 +40,11 @@ const sshTarget: SshTarget = {
   keyFile: process.env.SSH_KEY ?? "",
 }
 
-// host directory mounted at /data in the sandbox (defaults to the caller's
-// CWD in build/start-embed.ts, matching sandbox.py's mount semantics).
+// Host directory mounted at /data in the sandbox, configured once through
+// sandbox.mountDir so the VM mount and session workspace cannot diverge.
 // Sessions are placed here so tools execute against the sandbox while config
-// discovery and project resolution stay host-side. Without it, sessions stay
-// host-local (opencode's implicit-local default).
-const hostDataDir = process.env.WORKSPACE_HOST_DIR
+// discovery and project resolution stay host-side.
+const hostDataDir = runtime.sandbox.mountDir
 
 // Pin the sandbox's host key at every boot: ssh-keyscan writes it next to the
 // identity so the driver's ssh invocations verify silently. With the previous
@@ -51,8 +53,7 @@ const hostDataDir = process.env.WORKSPACE_HOST_DIR
 // generates fresh host keys per boot); when the sandbox is not listening,
 // remove a stale file so the driver falls back to accept-and-discard instead
 // of failing verification against a key that no longer exists.
-const knownHosts =
-  sshTarget.keyFile !== "" ? path.join(path.dirname(sshTarget.keyFile), "known_hosts") : undefined
+const knownHosts = sshTarget.keyFile !== "" ? path.join(path.dirname(sshTarget.keyFile), "known_hosts") : undefined
 if (knownHosts !== undefined) {
   // Scan the forward's literal bind address, not the configured host name:
   // "localhost" often resolves to ::1 first (Linux default), the port forward
@@ -60,19 +61,14 @@ if (knownHosts !== undefined) {
   // not fall back across address families, so scanning "localhost" yields
   // nothing and every driver call pays the accept-and-discard warning.
   const scanHost = sshTarget.host === "localhost" ? "127.0.0.1" : sshTarget.host
-  const scan = Bun.spawnSync([
-    "ssh-keyscan", "-p", String(sshTarget.port), "-t", "ed25519,rsa", scanHost,
-  ])
+  const scan = Bun.spawnSync(["ssh-keyscan", "-p", String(sshTarget.port), "-t", "ed25519,rsa", scanHost])
   const keys = scan.stdout
     .toString()
     .split("\n")
     .filter((line) => line.trim() !== "" && !line.startsWith("#"))
     .flatMap((line) => {
       const rest = line.split(" ").slice(1).join(" ")
-      return [
-        `[localhost]:${sshTarget.port} ${rest}`,
-        `[127.0.0.1]:${sshTarget.port} ${rest}`,
-      ]
+      return [`[localhost]:${sshTarget.port} ${rest}`, `[127.0.0.1]:${sshTarget.port} ${rest}`]
     })
   if (keys.length > 0) {
     writeFileSync(knownHosts, keys.join("\n") + "\n")
@@ -85,8 +81,7 @@ if (knownHosts !== undefined) {
     )
   }
 }
-const pathMap: PathMap | undefined =
-  hostDataDir === undefined ? undefined : { host: hostDataDir, guest: process.env.WORKSPACE_GUEST_DIR ?? "/data" }
+const pathMap: PathMap = { host: hostDataDir, guest: "/data" }
 
 // fixed id: adopts the same workspace across embed restarts (workspace.create
 // is idempotent per id+provider; a stale persisted binding keeps the ssh target
@@ -123,14 +118,23 @@ const program = Effect.gen(function* () {
     // EmbeddedHost and releases the subscription.
     const pass = () =>
       host.fetch(
-        url.pathname === "/api/event"
-          ? new Request(request, { signal: new AbortController().signal })
-          : request,
+        url.pathname === "/api/event" ? new Request(request, { signal: new AbortController().signal }) : request,
       )
-    if (hostDataDir === undefined) return pass()
     if (request.method !== "POST" || url.pathname !== "/api/session") return pass()
-    const payload = (await request.clone().json().catch(() => undefined)) as
-      | { parentID?: string; id?: string; title?: string; agent?: string; model?: string; metadata?: unknown; permissions?: unknown; location?: { directory?: string } }
+    const payload = (await request
+      .clone()
+      .json()
+      .catch(() => undefined)) as
+      | {
+          parentID?: string
+          id?: string
+          title?: string
+          agent?: string
+          model?: string
+          metadata?: unknown
+          permissions?: unknown
+          location?: { directory?: string }
+        }
       | undefined
     if (payload === undefined || payload.parentID !== undefined || payload.id !== undefined) return pass()
     try {
@@ -163,9 +167,7 @@ const program = Effect.gen(function* () {
     fetch: (request) => createInWorkspace(request),
   })
   console.log(`opencode embedder listening on http://localhost:${server.port}`)
-  console.log(
-    `ssh target: ${sshTarget.user}@${sshTarget.host}:${sshTarget.port} (key: ${sshTarget.keyFile || "none"})`,
-  )
+  console.log(`ssh target: ${sshTarget.user}@${sshTarget.host}:${sshTarget.port} (key: ${sshTarget.keyFile || "none"})`)
   console.log(`database: ${databaseFile}`)
 
   // Provision the ssh-backed workspace up front (idempotent per id+provider).
@@ -179,34 +181,28 @@ const program = Effect.gen(function* () {
   // (pass-through creates: parentID children, explicit-id adoptions, and any
   // create where the interception above failed): move them at their next safe
   // inbox boundary. The workspaceID check makes re-placement idempotent.
-  if (hostDataDir === undefined) {
-    console.log("WORKSPACE_HOST_DIR not set; sessions stay host-local")
-  } else {
-    const bus = Context.get(services, Bus.Service)
-    const placeSession = (sessionID: Session.ID) =>
-      Effect.gen(function* () {
-        const session = yield* host.sessions.get(sessionID)
-        if (session.location.workspaceID !== undefined) return
-        yield* host.sessions.move({ sessionID, directory: hostDataDir, workspaceID })
-        console.log(`session ${sessionID} placed into ssh workspace ${workspaceID}`)
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() => console.error(`failed to place session ${sessionID}:`, cause)),
-        ),
-      )
-
-    // Subscribe before sweeping: a session created between sweep and
-    // subscription would otherwise be missed. The workspaceID check makes the
-    // double placement of a session caught by both paths harmless. Bus events
-    // are envelopes: the payload fields live under event.data.
-    yield* bus.subscribe(SessionEvent.Created).pipe(
-      Stream.runForEach((event) => placeSession(event.data.sessionID)),
-      Effect.forkScoped,
+  const bus = Context.get(services, Bus.Service)
+  const placeSession = (sessionID: Session.ID) =>
+    Effect.gen(function* () {
+      const session = yield* host.sessions.get(sessionID)
+      if (session.location.workspaceID !== undefined) return
+      yield* host.sessions.move({ sessionID, directory: hostDataDir, workspaceID })
+      console.log(`session ${sessionID} placed into ssh workspace ${workspaceID}`)
+    }).pipe(
+      Effect.catchCause((cause) => Effect.sync(() => console.error(`failed to place session ${sessionID}:`, cause))),
     )
-    const listed = yield* host.sessions.list({ limit: 200 })
-    yield* Effect.forEach(listed.data, (session) => placeSession(session.id), { concurrency: 1, discard: true })
-    console.log(`placing sessions into ssh workspace ${workspaceID} at ${hostDataDir}`)
-  }
+
+  // Subscribe before sweeping: a session created between sweep and
+  // subscription would otherwise be missed. The workspaceID check makes the
+  // double placement of a session caught by both paths harmless. Bus events
+  // are envelopes: the payload fields live under event.data.
+  yield* bus.subscribe(SessionEvent.Created).pipe(
+    Stream.runForEach((event) => placeSession(event.data.sessionID)),
+    Effect.forkScoped,
+  )
+  const listed = yield* host.sessions.list({ limit: 200 })
+  yield* Effect.forEach(listed.data, (session) => placeSession(session.id), { concurrency: 1, discard: true })
+  console.log(`placing sessions into ssh workspace ${workspaceID} at ${hostDataDir}`)
 
   // Park the fiber so the scope never closes and the host stays alive.
   yield* Effect.never

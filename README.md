@@ -9,6 +9,8 @@ session, config discovery, and the mounted `data/` directory stay on the host.
 
 | Path | Purpose |
 |------|---------|
+| `config.jsonc` | runtime paths, OpenCode checkout tag/port, and sandbox initialization settings |
+| `run-template/` | tracked template for the ignored runtime `run/` directory |
 | `opencode/` | opencode poc TypeScript sources: SSH workspace driver (`driver.ts` + per-platform adapters), embedder (`embed.ts`), streaming test (`stream-test.ts`) |
 | `quicksand/` | VM launcher, default `init.sh`, and runtime SSH keys |
 | `build/` | CI-friendly build/run scripts (`build/*.ts`), the pinned opencode checkout (`build/opencode`), compiled executables (`build/dist`) |
@@ -27,11 +29,10 @@ session, config discovery, and the mounted `data/` directory stay on the host.
   `winget install --id=astral-sh.uv` / `brew install uv`
 - git, and an OpenSSH client (`ssh`, `ssh-keygen`, `ssh-keyscan`) on PATH
 - the `opencode` CLI on PATH (for `opencode run` testing)
-- an `OPENCODE_CONFIG_DIR` containing `opencode.jsonc` with your model and
-  provider authentication configured (set `"shell": "bash"` for the guest)
-- a writable `OPENCODE_CACHE_DIR` for the embedder's persistent SQLite database
-- a `SANDBOX_INIT_SCRIPT` bash file; `quicksand/init.sh` installs and enables
-  OpenSSH for the default setup
+- `config.jsonc` pointing to an OpenCode config directory, writable cache
+  directory, and sandbox init script; the OpenCode `opencode.jsonc` should set
+  `"shell": "bash"` for the guest
+- a runtime directory copied from the tracked template: `cp -R run-template run`
 
 ## Quickstart (three terminals)
 
@@ -40,24 +41,23 @@ content-addressed sandbox image when needed. Pressing CTRL+C stops the embedder
 first and then closes the sandbox gracefully.
 
 ```bash
+# one-time runtime setup (run/ is gitignored)
+cp -R run-template run
+
 # 1) initialize the image, then start the VM: sshd on 127.0.0.1:2222
-export SANDBOX_INIT_SCRIPT="$PWD/quicksand/init.sh"
 bun run init:sandbox
 bun run start:sandbox
 
-# 2) opencode embedder on http://localhost:4096 (first run: clone + bun install)
-export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
-export OPENCODE_CACHE_DIR="$PWD/run/cache"
+# 2) opencode embedder on the configured opencode.port (first run: clone + bun install)
 bun run start:embed
 
 # 3) drive the configured model — every command runs inside the VM
-opencode run --server http://localhost:4096 --auto \
+opencode run --server http://localhost:14096 --auto \
   "Run the shell command: hostname && uname -a && head -5 /data/README.md"
 ```
 
-(Windows: set `$env:SANDBOX_INIT_SCRIPT = "$PWD\quicksand\init.sh"` and
-`$env:OPENCODE_CACHE_DIR = "$PWD\run\cache"`; see TESTING.md for per-shell
-variants and the host-platform support table.)
+The same commands work in PowerShell; no runtime environment variables are
+required.
 
 ## Packaging (standalone executables)
 
@@ -73,41 +73,51 @@ bun run build:all
   on Bun 1.4.4, and machine-code AOT cannot cross-compile; notes in
   `build/build-embed-exe.ts`). Cross-compiles every target from one host; the
   pty binary of the *target* platform is force-installed and embedded via the
-  same plugin upstream uses. Needs env vars:
-  `PORT`, `SSH_KEY`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CACHE_DIR`,
-  `WORKSPACE_HOST_DIR`, optional `SSH_DRIVER_LOG`.
+  same plugin upstream uses. Reads `config.jsonc` from its start directory by
+  default; pass `--config <file>` to use another file.
 - `sandbox-*` (~330 MB): PyInstaller onefile with interpreter + deps + Ubuntu
   image + QEMU binaries, built in the uv-managed `build` dependency-group.
   PyInstaller cannot cross-compile — build on the target platform (CI does).
-  Set `SANDBOX_INIT_SCRIPT`, run once with `--init`, then run normally. The VM
-  mounts the directory the exe is STARTED FROM at `/data`
-  (`SANDBOX_MOUNT_DIR` overrides). First start extracts the archive to the temp
+  Reads `config.jsonc` from its start directory by default; pass `--config
+  <file>`. Run once with `--init`, then run normally. The VM mounts
+  `sandbox.mountDir` at `/data`. First start extracts the archive to the temp
   dir (~10-20 s).
 
 ## Scripts
 
 | Command | What it does |
 |---------|--------------|
-| `bun run init:sandbox` | hashes `SANDBOX_INIT_SCRIPT`; creates `.quicksand/sandboxes/ubuntu-<sha256>` from Ubuntu when absent |
+| `bun run init:sandbox` | hashes `sandbox.initScript`, mounts its sibling `init/` at `/mnt/init`, and creates `.quicksand/sandboxes/ubuntu-<sha256>` when absent |
 | `bun run start:opencode` | initializes and starts the sandbox, waits for readiness, then starts the embedder; CTRL+C stops both in order |
 | `bun run start:sandbox` | boots the matching `ubuntu-<sha256>` image (interactive: Enter stops; CI: 5-min hold) |
-| `bun run start:embed` | fetches the opencode checkout at the pinned commit (`OPENCODE_COMMIT` or default), syncs `opencode/*.ts` → `build/opencode/poc`, `bun install`, starts the embedder |
+| `bun run start:embed` | fetches `opencode.tag`, syncs `opencode/*.ts` → `build/opencode/poc`, installs dependencies, and starts the embedder |
 | `bun run build:embed` | compiles `embed-<target>` for `EMBED_TARGET` (windows-x64, linux-x64, linux-arm64; default: host) |
 | `bun run build:sandbox` | `uv sync --frozen --group build`, then PyInstaller onefile as `sandbox-<os>-<arch>` |
 | `bun run build:all` | both (host target) |
 
-## Environment
+## Configuration
 
-| Variable | Default | Used by |
-|----------|---------|---------|
-| `OPENCODE_CONFIG_DIR` | — (required; must contain `opencode.jsonc`) | embedder model/provider config |
-| `OPENCODE_CACHE_DIR` | — (required) | embedder state (`opencode.db` SQLite database) |
-| `SANDBOX_INIT_SCRIPT` | — (required) | bash file whose SHA-256 selects the saved sandbox image |
-| `SANDBOX_MOUNT_DIR` | caller's CWD | sandbox: host directory mounted at `/data` |
-| `OPENCODE_COMMIT` | `ced73dc0…` (pinned) | checkout pin; falls back to the sibling `../opencode` checkout's HEAD when present |
-| `EMBED_TARGET` | host platform | `build:embed` cross-compile target |
-| `PORT` / `SSH_HOST` / `SSH_PORT` / `SSH_KEY` / `WORKSPACE_HOST_DIR` | 4096 / localhost / 2222 / `quicksand/ssh/quicksand_demo` / caller's CWD | embedder (workspace dir must match the sandbox mount) |
-| `SSH_DRIVER_LOG` | unset | `1` traces every ssh invocation from the driver |
+Paths in `config.jsonc` are resolved relative to that file.
+The checked-in configuration points at the gitignored `run/` directory; create
+it from `run-template/` before first use. Runtime databases and local config
+changes therefore stay untracked while the complete starting layout remains
+versioned.
+
+| Key | Purpose |
+|-----|---------|
+| `opencode.configDir` | directory containing OpenCode's `opencode.jsonc` |
+| `opencode.cacheDir` | persistent embedder state (`opencode.db`) |
+| `opencode.tag` | Git tag, branch, or commit fetched for the pinned checkout |
+| `opencode.port` | embedder HTTP port |
+| `sandbox.initScript` | bash file whose SHA-256 selects the saved image |
+| `sandbox.mountDir` | host directory mounted at `/data` and used as the workspace |
+
+During `init:sandbox`, the directory named `init` beside `sandbox.initScript`
+is mounted at `/mnt/init`. It is a host mount and is **not** persisted in the
+saved image; the script must copy anything it needs to retain onto the guest
+filesystem. Only the script bytes affect the image hash.
+
+`EMBED_TARGET` remains an optional build-only override for cross-compilation.
 
 ## CI / releases
 

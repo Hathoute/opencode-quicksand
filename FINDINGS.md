@@ -17,12 +17,12 @@ normal global DB (`~/.local/share/opencode/opencode.db`, migrated from legacy
 
 **Fix (applied):**
 
-- require `OPENCODE_CONFIG_DIR` and pass it through
+- read `opencode.configDir` from `config.jsonc` and pass it through
   `ServerOptions.config.directory`. Its `opencode.jsonc` defines the model and
   provider authentication (including `{env:...}` or `{file:...}` substitutions)
   while preserving native JSONC parsing, supplementary directories, and watching
-- require `OPENCODE_CACHE_DIR` and pass
-  `database: { path: "<OPENCODE_CACHE_DIR>/opencode.db" }` to
+- read `opencode.cacheDir` and pass
+  `database: { path: "<opencode.cacheDir>/opencode.db" }` to
   `EmbeddedHost.create`, replacing `:memory:` with persistent SQLite state
 
 ## 2. Session placement fails for CLI-created sessions (event envelope shape)
@@ -47,7 +47,7 @@ platform (`packages/core/src/shell/select.ts`, falls back to `win()[0]` = PowerS
 when no config shell is set).
 
 **Fix (applied, two parts):**
-1. `OPENCODE_CONFIG_DIR/opencode.jsonc` sets `shell: "bash"`, so the tool resolves
+1. The `opencode.jsonc` under `opencode.configDir` sets `shell: "bash"`, so the tool resolves
    a bash shell and the model writes POSIX commands.
 2. `driver.ts` `guestShell()` translates Windows shell invocations at the spawner
    boundary (same philosophy as the path map): powershell/pwsh/cmd → guest
@@ -311,13 +311,19 @@ sandbox.py mounts its CWD at /data in the guest). PyInstaller lives in a
 
 ## 17. Sandbox initialization is content-addressed
 
-The sandbox no longer installs OpenSSH on every boot. `SANDBOX_INIT_SCRIPT`
-points to a bash file whose exact bytes are SHA-256 hashed. `init:sandbox`
+The sandbox no longer installs OpenSSH on every boot. `sandbox.initScript` in
+`config.jsonc` points to a bash file whose exact bytes are SHA-256 hashed. `init:sandbox`
 boots the base Ubuntu image, runs the script, and saves the disk as
 `.quicksand/sandboxes/ubuntu-<sha256>`; subsequent starts boot that save.
 Changing the script automatically selects a new image. Normal startup only
 refreshes the generated SSH public key and deliberately does not validate
 sshd, so custom scripts own the guest's SSH behavior completely.
+
+Initialization also mounts the script's sibling `init/` directory at
+`/mnt/init`. Quicksand excludes mounts from saves, so those files are not
+persisted unless the script copies them into the guest filesystem. The image
+key remains the init script's hash; changing mounted files alone does not select
+a new image.
 
 ## 18. Closing the CLI event stream crashed the embedder
 

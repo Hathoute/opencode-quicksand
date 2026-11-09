@@ -7,6 +7,7 @@
 import path from "path"
 import { $ } from "bun"
 import { PROJECT_ROOT, SANDBOX_DIR, ensureUv } from "./common"
+import { CONFIG_FILE } from "./config"
 
 ensureUv()
 
@@ -15,11 +16,20 @@ ensureUv()
 // uv-created environments ship without it). --frozen refuses lockfile drift.
 await $`uv sync --frozen`.cwd(PROJECT_ROOT)
 
-// no cwd on purpose: the child must inherit THIS process's CWD — sandbox.py
-// mounts the directory it is run from at /data in the guest. --project
-// selects the environment WITHOUT changing the child's working directory.
+// --project selects the environment without changing the child cwd; Quicksand
+// stores its named image saves under this project's .quicksand directory.
 const proc = Bun.spawn(
-  ["uv", "run", "--no-sync", "--project", PROJECT_ROOT, "python", path.join(SANDBOX_DIR, "sandbox.py")],
+  [
+    "uv",
+    "run",
+    "--no-sync",
+    "--project",
+    PROJECT_ROOT,
+    "python",
+    path.join(SANDBOX_DIR, "sandbox.py"),
+    "--config",
+    CONFIG_FILE,
+  ],
   {
     stdout: "inherit",
     stderr: "inherit",

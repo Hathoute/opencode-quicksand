@@ -1,10 +1,11 @@
 import { cpSync, existsSync, symlinkSync } from "node:fs"
 import path from "path"
 import { $ } from "bun"
-import { CHECKOUT_DIR, DEFAULT_COMMIT, POC_DIR, REPO_URL } from "./common"
+import { CHECKOUT_DIR, POC_DIR, REPO_URL } from "./common"
+import { config } from "./config"
 
 /** Clone (shallow, pinned commit) or reuse the opencode checkout. */
-export const ensureRepo = async (commit: string = process.env.OPENCODE_COMMIT ?? DEFAULT_COMMIT) => {
+export const ensureRepo = async (commit: string = config.opencode.tag) => {
   if (!existsSync(path.join(CHECKOUT_DIR, ".git"))) {
     await $`git init ${CHECKOUT_DIR}`.quiet()
     await $`git -C ${CHECKOUT_DIR} remote add origin ${REPO_URL}`.quiet()
@@ -33,6 +34,5 @@ export const ensureDeps = async () => {
   await $`bun install --frozen-lockfile`.cwd(CHECKOUT_DIR).quiet()
   const effectTarget = path.join(CHECKOUT_DIR, "packages", "sdk", "node_modules", "effect")
   const effectLink = path.join(CHECKOUT_DIR, "node_modules", "effect")
-  if (existsSync(effectTarget) && !existsSync(effectLink))
-    symlinkSync(effectTarget, effectLink, "junction")
+  if (existsSync(effectTarget) && !existsSync(effectLink)) symlinkSync(effectTarget, effectLink, "junction")
 }

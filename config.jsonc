@@ -1,0 +1,14 @@
+{
+  // Paths are resolved relative to this file.
+  // Create the ignored runtime tree once with: cp -R run-template run
+  "opencode": {
+    "configDir": "./run/config",
+    "cacheDir": "./run/cache",
+    "tag": "ced73dc0f6c5b00c3a085b1d7b11ea31f790c5df",
+    "port": 14096,
+  },
+  "sandbox": {
+    "initScript": "./run/init.sh",
+    "mountDir": ".",
+  },
+}

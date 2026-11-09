@@ -1,17 +1,18 @@
 """Ubuntu sandbox demo:
-- derives a persistent image name from SANDBOX_INIT_SCRIPT's SHA-256
+- derives a persistent image name from sandbox.initScript's SHA-256
 - --init creates that image from Ubuntu when it does not already exist
 - NetworkMode.FULL (internet access)
-- mounts the directory it is RUN FROM (the caller's CWD) at /data in the VM;
-  SANDBOX_MOUNT_DIR overrides this
+- mounts sandbox.mountDir at /data in the VM
 - guest SSH (22) exposed on host 127.0.0.1:2222
 - generates ./ssh/quicksand_demo next to the script (next to the exe when
   frozen) and injects the pubkey into the VM so opencode's ssh driver can
   log in non-interactively (BatchMode)
 """
 
+import argparse
 import asyncio
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -20,14 +21,11 @@ from pathlib import Path
 from quicksand import Forward, Guest, Host, Mount, NetworkMode, Sandbox
 
 
-def _mount_dir() -> Path:
-    """Directory mounted at /data in the guest: the directory the sandbox is
-    RUN FROM (the caller's CWD — identical semantics from source and the
-    frozen exe). SANDBOX_MOUNT_DIR overrides when the launcher's CWD differs
-    from the intended workspace (e.g. CI)."""
-    if (override := os.environ.get("SANDBOX_MOUNT_DIR")) is not None:
-        return Path(override)
-    return Path.cwd()
+def _arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.jsonc")
+    parser.add_argument("--init", action="store_true")
+    return parser.parse_args()
 
 
 def _script_dir() -> Path:
@@ -38,13 +36,95 @@ def _script_dir() -> Path:
     return Path(__file__).parent
 
 
-def _init_script() -> Path:
-    value = os.environ.get("SANDBOX_INIT_SCRIPT", "").strip()
-    if not value:
-        raise RuntimeError("SANDBOX_INIT_SCRIPT is required")
-    script = Path(value).expanduser().resolve()
+def _load_config(file: Path) -> tuple[Path, Path]:
+    if not file.is_file():
+        raise FileNotFoundError(f"config file not found: {file}")
+    config = json.loads(_strip_trailing_commas(_strip_comments(file.read_text())))
+    try:
+        sandbox = config["sandbox"]
+        init_script = sandbox["initScript"]
+        mount_dir = sandbox["mountDir"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"invalid sandbox config in {file}: {error}") from error
+    if not isinstance(init_script, str) or not init_script.strip():
+        raise ValueError("sandbox.initScript must be a non-empty string")
+    if not isinstance(mount_dir, str) or not mount_dir.strip():
+        raise ValueError("sandbox.mountDir must be a non-empty string")
+    return _resolve(file.parent, init_script), _resolve(file.parent, mount_dir)
+
+
+def _resolve(base: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    return (base / path).resolve() if not path.is_absolute() else path.resolve()
+
+
+def _strip_comments(text: str) -> str:
+    output: list[str] = []
+    index = 0
+    quoted = False
+    escaped = False
+    while index < len(text):
+        char = text[index]
+        if quoted:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            index += 1
+            continue
+        if char == '"':
+            quoted = True
+            output.append(char)
+            index += 1
+            continue
+        if text[index : index + 2] == "//":
+            index += 2
+            while index < len(text) and text[index] != "\n":
+                index += 1
+            continue
+        if text[index : index + 2] == "/*":
+            index += 2
+            while index < len(text) and text[index : index + 2] != "*/":
+                if text[index] == "\n":
+                    output.append("\n")
+                index += 1
+            index += 2
+            continue
+        output.append(char)
+        index += 1
+    return "".join(output)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    output: list[str] = []
+    quoted = False
+    escaped = False
+    for index, char in enumerate(text):
+        if quoted:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+            output.append(char)
+            continue
+        if char == "," and text[index + 1 :].lstrip().startswith(("}", "]")):
+            continue
+        output.append(char)
+    return "".join(output)
+
+
+def _validate_init_script(script: Path) -> Path:
     if not script.is_file():
-        raise FileNotFoundError(f"SANDBOX_INIT_SCRIPT does not exist or is not a file: {script}")
+        raise FileNotFoundError(f"sandbox.initScript does not exist or is not a file: {script}")
     return script
 
 
@@ -81,9 +161,14 @@ def patch_frozen_qemu():
     print("frozen mode: QEMU reaper wrapper disabled (direct spawn)")
 
 
-MOUNT_DIR = _mount_dir()
+ARGS = _arguments()
+CONFIG_FILE = Path(ARGS.config).expanduser().resolve()
+INIT_SCRIPT, MOUNT_DIR = _load_config(CONFIG_FILE)
+INIT_SCRIPT = _validate_init_script(INIT_SCRIPT)
+INIT_MOUNT_DIR = INIT_SCRIPT.parent / "init"
+if not INIT_MOUNT_DIR.is_dir():
+    raise FileNotFoundError(f"sandbox init mount does not exist or is not a directory: {INIT_MOUNT_DIR}")
 KEY_PATH = _script_dir() / "ssh" / "quicksand_demo"
-INIT_SCRIPT = _init_script()
 IMAGE_NAME = f"ubuntu-{hashlib.sha256(INIT_SCRIPT.read_bytes()).hexdigest()}"
 IMAGE_PATH = Path.cwd() / ".quicksand" / "sandboxes" / IMAGE_NAME
 patch_frozen_qemu()
@@ -107,10 +192,16 @@ async def init_image():
         return
 
     print(f"Creating sandbox image {IMAGE_NAME} from {INIT_SCRIPT}...")
+    print(f"Init mount: {INIT_MOUNT_DIR} -> /mnt/init (not persisted automatically)")
     # The base image is intentionally small; toolchain init scripts (JDK, Node,
     # build tools) need room beyond its default virtual disk size. qcow2 keeps
     # this sparse on the host.
-    async with Sandbox(image="ubuntu", network_mode=NetworkMode.FULL, disk_size="10G") as sb:
+    async with Sandbox(
+        image="ubuntu",
+        network_mode=NetworkMode.FULL,
+        disk_size="10G",
+        mounts=[Mount(str(INIT_MOUNT_DIR), "/mnt/init")],
+    ) as sb:
         result = await sb.execute(
             "bash -s",
             stdin=INIT_SCRIPT.read_bytes(),
@@ -119,7 +210,7 @@ async def init_image():
             on_stderr=lambda chunk: print(chunk, file=sys.stderr, end="", flush=True),
         )
         if result.exit_code != 0:
-            raise RuntimeError(f"SANDBOX_INIT_SCRIPT failed with exit code {result.exit_code}")
+            raise RuntimeError(f"sandbox.initScript failed with exit code {result.exit_code}")
         await sb.save(IMAGE_NAME)
     print(f"Sandbox image saved: {IMAGE_NAME}")
 
@@ -144,7 +235,7 @@ async def main():
         print(f"  /data: {result.stdout.strip().replace(chr(10), ', ')[:200]!r}")
 
         # Refresh the authorized key on every boot. OpenSSH installation and
-        # service configuration belong to SANDBOX_INIT_SCRIPT; intentionally do
+        # service configuration belong to sandbox.initScript; intentionally do
         # not validate sshd here, so a broken custom image fails at the driver.
         await sb.execute(
             "mkdir -p /root/.ssh && cat > /root/.ssh/authorized_keys && "
@@ -167,9 +258,7 @@ async def main():
             print("(non-interactive: holding sandbox open for 5 minutes)")
             await asyncio.sleep(300)
 
-if sys.argv[1:] == ["--init"]:
+if ARGS.init:
     asyncio.run(init_image())
-elif sys.argv[1:]:
-    raise RuntimeError(f"unknown arguments: {' '.join(sys.argv[1:])}")
 else:
     asyncio.run(main())

@@ -113,5 +113,5 @@ jobs:
         run: |
           gh release create "$TAG" --draft --generate-notes \
             --title "$TAG" \
-            --notes "Standalone binaries. \`embed-\*: env vars PORT, SSH_KEY, OPENCODE_CONFIG_DIR (containing opencode.jsonc), OPENCODE_CACHE_DIR (persistent SQLite state), WORKSPACE_HOST_DIR (+SSH_DRIVER_LOG). \`sandbox-*\`: set SANDBOX_INIT_SCRIPT, run once with --init, then run normally (sshd on 127.0.0.1:2222, start directory mounted at /data; SANDBOX_MOUNT_DIR overrides). See TESTING.md for the full workflow." \
+            --notes "Standalone binaries read config.jsonc from their start directory (or --config <file>). Run sandbox-* once with --init, then normally; sandbox.mountDir is mounted at /data and sshd is exposed on 127.0.0.1:2222. See TESTING.md for the full workflow." \
             dist/*

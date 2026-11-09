@@ -3,12 +3,24 @@
 import path from "path"
 import { $ } from "bun"
 import { PROJECT_ROOT, SANDBOX_DIR, ensureUv } from "./common"
+import { CONFIG_FILE } from "./config"
 
 ensureUv()
 await $`uv sync --frozen`.cwd(PROJECT_ROOT)
 
 const proc = Bun.spawn(
-  ["uv", "run", "--no-sync", "--project", PROJECT_ROOT, "python", path.join(SANDBOX_DIR, "sandbox.py"), "--init"],
+  [
+    "uv",
+    "run",
+    "--no-sync",
+    "--project",
+    PROJECT_ROOT,
+    "python",
+    path.join(SANDBOX_DIR, "sandbox.py"),
+    "--config",
+    CONFIG_FILE,
+    "--init",
+  ],
   {
     stdout: "inherit",
     stderr: "inherit",
