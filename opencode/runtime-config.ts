@@ -46,6 +46,7 @@ export const loadRuntimeConfig = async (file: string) => {
       cpus: positiveInteger(sandbox.cpus ?? 1, "sandbox.cpus"),
       memory: string(sandbox.memory ?? "512M", "sandbox.memory"),
       diskSize: string(sandbox.diskSize ?? "10G", "sandbox.diskSize"),
+      enableDisplay: boolean(sandbox.enableDisplay ?? false, "sandbox.enableDisplay"),
       initScript: resolve(base, string(sandbox.initScript, "sandbox.initScript")),
       cacheDir: resolve(base, string(sandbox.cacheDir, "sandbox.cacheDir")),
       mounts,
@@ -84,6 +85,11 @@ function port(value: unknown, name: string) {
 function positiveInteger(value: unknown, name: string) {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1)
     throw new Error(`${name} must be a positive integer`)
+  return value
+}
+
+function boolean(value: unknown, name: string) {
+  if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`)
   return value
 }
 

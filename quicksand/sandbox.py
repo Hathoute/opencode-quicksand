@@ -50,6 +50,7 @@ def _load_config(
     int,
     str,
     str,
+    bool,
 ]:
     if not file.is_file():
         raise FileNotFoundError(f"config file not found: {file}")
@@ -60,6 +61,7 @@ def _load_config(
         cpus = sandbox.get("cpus", 1)
         memory = sandbox.get("memory", "512M")
         disk_size = sandbox.get("diskSize", "10G")
+        enable_display = sandbox.get("enableDisplay", False)
         init_script = sandbox["initScript"]
         cache_dir = sandbox["cacheDir"]
         mount_config = sandbox.get("mounts", [])
@@ -75,6 +77,8 @@ def _load_config(
         raise ValueError("sandbox.memory must be a non-empty string")
     if not isinstance(disk_size, str) or not disk_size.strip():
         raise ValueError("sandbox.diskSize must be a non-empty string")
+    if not isinstance(enable_display, bool):
+        raise ValueError("sandbox.enableDisplay must be a boolean")
     if not isinstance(init_script, str) or not init_script.strip():
         raise ValueError("sandbox.initScript must be a non-empty string")
     if not isinstance(cache_dir, str) or not cache_dir.strip():
@@ -91,6 +95,7 @@ def _load_config(
         cpus,
         memory,
         disk_size,
+        enable_display,
     )
 
 
@@ -286,7 +291,17 @@ def patch_frozen_qemu():
 
 ARGS = _arguments()
 CONFIG_FILE = Path(ARGS.config).expanduser().resolve()
-BASE_IMAGE, INIT_SCRIPT, CACHE_DIR, PORT_MAPPINGS, MOUNTS, CPUS, MEMORY, DISK_SIZE = _load_config(CONFIG_FILE)
+(
+    BASE_IMAGE,
+    INIT_SCRIPT,
+    CACHE_DIR,
+    PORT_MAPPINGS,
+    MOUNTS,
+    CPUS,
+    MEMORY,
+    DISK_SIZE,
+    ENABLE_DISPLAY,
+) = _load_config(CONFIG_FILE)
 MOUNT_DIR = Path.cwd().resolve()
 INIT_SCRIPT = _validate_init_script(INIT_SCRIPT)
 INIT_MOUNT_DIR = INIT_SCRIPT.parent / "init"
@@ -296,6 +311,8 @@ KEY_PATH = _script_dir() / "ssh" / "quicksand_demo"
 IMAGE_NAME = f"{BASE_IMAGE}-{hashlib.sha256(INIT_SCRIPT.read_bytes()).hexdigest()}"
 IMAGE_PATH = CACHE_DIR / IMAGE_NAME
 SSH_PORT_PATH = CACHE_DIR / "ssh-port"
+VNC_PORT_PATH = CACHE_DIR / "vnc-port"
+DESKTOP_SCREENSHOT_PATH = CACHE_DIR / "desktop.png"
 PORT_FORWARDS = [
     Forward(
         Host(source_port) if source == "Host" else Guest(source_port),
@@ -358,6 +375,8 @@ async def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     SSH_PORT_PATH.write_text(f"{ssh_host_port}\n")
     atexit.register(SSH_PORT_PATH.unlink, missing_ok=True)
+    VNC_PORT_PATH.unlink(missing_ok=True)
+    atexit.register(VNC_PORT_PATH.unlink, missing_ok=True)
     print(f"SSH keypair: {KEY_PATH} (+ .pub)")
     print(f"Sandbox image: {IMAGE_NAME}")
 
@@ -367,9 +386,15 @@ async def main():
         cpus=CPUS,
         memory=MEMORY,
         disk_size=DISK_SIZE,
+        enable_display=ENABLE_DISPLAY,
         mounts=[Mount(str(MOUNT_DIR), "/data"), *CONFIGURED_MOUNTS],
         port_forwards=[Forward(Host(ssh_host_port), Guest(22)), *PORT_FORWARDS],
     ) as sb:
+        if sb.vnc_port is not None:
+            VNC_PORT_PATH.write_text(f"{sb.vnc_port}\n")
+            await asyncio.sleep(2)
+            await sb.screenshot(DESKTOP_SCREENSHOT_PATH)
+
         # Sanity check: the mount is live. The content is whatever the caller's
         # directory holds, so only assert that /data exists and is listable —
         # no specific file is guaranteed to be there anymore.
@@ -394,6 +419,9 @@ async def main():
         print(f"  SSH (pw):   ssh -p {ssh_host_port} root@127.0.0.1          (password: root)")
         print(f"  Mount:      host {MOUNT_DIR} -> guest /data")
         print(f"  Port rule:  Host({ssh_host_port}) -> Guest(22) (automatic SSH)")
+        if sb.vnc_port is not None:
+            print(f"  Desktop VNC: vnc://127.0.0.1:{sb.vnc_port}")
+            print(f"  Screenshot:  {DESKTOP_SCREENSHOT_PATH}")
         for source, source_port, destination, destination_port in PORT_MAPPINGS:
             print(f"  Port rule:  {source}({source_port}) -> {destination}({destination_port})")
 
@@ -404,6 +432,7 @@ async def main():
             print("(non-interactive: holding sandbox open for 5 minutes)")
             await asyncio.sleep(300)
     SSH_PORT_PATH.unlink(missing_ok=True)
+    VNC_PORT_PATH.unlink(missing_ok=True)
 
 if ARGS.init:
     asyncio.run(init_image())

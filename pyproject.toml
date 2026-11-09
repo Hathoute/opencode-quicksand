@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "opencode with every tool execution inside a quicksand VM (build/runtime tooling)"
 requires-python = ">=3.11"
 dependencies = [
-    "quick-sandbox[qemu,ubuntu]>=0.13",
+    "quick-sandbox[qemu,ubuntu,ubuntu-desktop]>=0.13",
     # quicksand resolves its fat image/qemu wheels at first boot by shelling
     # out to `python -m pip` (PyPI hosts 3.7KB stubs; the real wheels live on
     # the quicksand simple index). uv-created environments ship WITHOUT pip,

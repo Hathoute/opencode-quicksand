@@ -115,7 +115,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pip" },
-    { name = "quick-sandbox", extra = ["qemu", "ubuntu"] },
+    { name = "quick-sandbox", extra = ["qemu", "ubuntu", "ubuntu-desktop"] },
 ]
 
 [package.dev-dependencies]
@@ -126,7 +126,7 @@ build = [
 [package.metadata]
 requires-dist = [
     { name = "pip" },
-    { name = "quick-sandbox", extras = ["qemu", "ubuntu"], specifier = ">=0.13" },
+    { name = "quick-sandbox", extras = ["qemu", "ubuntu", "ubuntu-desktop"], specifier = ">=0.13" },
 ]
 
 [package.metadata.requires-dev]
@@ -378,6 +378,9 @@ qemu = [
 ubuntu = [
     { name = "quicksand-ubuntu" },
 ]
+ubuntu-desktop = [
+    { name = "quicksand-ubuntu-desktop" },
+]
 
 [[package]]
 name = "quicksand-core"
@@ -423,6 +426,18 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/59/58/4d9a9280a45e2b172ac273d724895a39267f725402c8a73077c1ea93005b/quicksand_ubuntu-0.10.2-py3-none-any.whl", hash = "sha256:6d9f1456465d0045d7ed91b159bbbe739aa0e0200ff8d20d81e2c6e1e14881dd", size = 3752, upload-time = "2026-11-02T19:40:59.914Z" },
+]
+
+[[package]]
+name = "quicksand-ubuntu-desktop"
+version = "0.9.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "quicksand-core" },
+    { name = "quicksand-ubuntu" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/d6/c36022e53500c05596eac69ba008b8c9f184c5eadc856d8dccf7d75c4d43/quicksand_ubuntu_desktop-0.9.12-py3-none-any.whl", hash = "sha256:02df6e8d2b9f6f9fa6ea380661bfff26a1f73f8774cdd716d4c3d346a60922bf", size = 3894, upload-time = "2026-11-02T19:41:01.737Z" },
 ]
 
 [[package]]

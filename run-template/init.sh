@@ -9,7 +9,26 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   nodejs \
   npm \
   nftables \
+  podman \
+  uidmap \
+  slirp4netns \
+  fuse-overlayfs \
   ripgrep
+
+id podmanuser >/dev/null 2>&1 || useradd --create-home --shell /bin/bash podmanuser
+grep -q '^podmanuser:' /etc/subuid || usermod --add-subuids 100000-165535 podmanuser
+grep -q '^podmanuser:' /etc/subgid || usermod --add-subgids 100000-165535 podmanuser
+podman_uid="$(id -u podmanuser)"
+loginctl enable-linger podmanuser
+cat > /etc/tmpfiles.d/podman-rootless.conf <<EOF
+d /run/user/$podman_uid 0700 podmanuser podmanuser -
+EOF
+systemd-tmpfiles --create /etc/tmpfiles.d/podman-rootless.conf
+cat > /etc/profile.d/podman-rootless.sh <<'EOF'
+if [ "$(id -u)" -ne 0 ]; then
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+fi
+EOF
 
 mkdir -p /run/sshd /etc/ssh/sshd_config.d /root/.ssh
 printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/99-demo.conf

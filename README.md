@@ -131,6 +131,7 @@ versioned.
 | `sandbox.cpus` | number of virtual CPUs (positive integer; default `1`) |
 | `sandbox.memory` | guest memory size accepted by Quicksand (default `512M`) |
 | `sandbox.diskSize` | guest disk size accepted by Quicksand (default `10G`) |
+| `sandbox.enableDisplay` | enable the QEMU display, VNC endpoint, and host screenshot (default `false`; use with a desktop image) |
 | `sandbox.initScript` | bash file whose SHA-256 selects the saved image |
 | `sandbox.cacheDir` | directory containing content-addressed sandbox images |
 | `sandbox.mounts` | additional host/guest directory mounts; relative host paths resolve from `config.jsonc` and are created automatically |
@@ -146,7 +147,21 @@ saved image; the script must copy anything it needs to retain onto the guest
 filesystem. Additional `sandbox.mounts` are also available but are likewise not
 persisted. Only the script bytes affect the image hash.
 
+The default init script installs Podman with rootless dependencies and creates
+`podmanuser` with subordinate UID/GID ranges, lingering, and a persistent
+runtime-directory rule. Run rootless commands with, for example,
+`runuser -l podmanuser -c 'podman info'`.
+
 `EMBED_TARGET` remains an optional build-only override for cross-compilation.
+
+With `sandbox.enableDisplay: true`, startup prints the loopback-only VNC URL,
+writes its port to `<sandbox.cacheDir>/vnc-port`, and captures
+`<sandbox.cacheDir>/desktop.png`. Connect with TigerVNC using its explicit-port
+syntax (two colons):
+
+```bash
+vncviewer "127.0.0.1::$(cat ~/.opencode-quicksand/.quicksand/sandboxes/vnc-port)"
+```
 
 ## CI / releases
 

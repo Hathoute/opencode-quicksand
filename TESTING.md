@@ -42,6 +42,9 @@ Prerequisites (one-time):
   system Python or pip required
 - OpenSSH client on PATH (`ssh`, `ssh-keygen`, `ssh-keyscan`) — Windows: the
   "OpenSSH Client" optional capability · Linux: `openssh-client` · macOS: built in
+- TigerVNC viewer for desktop images — Windows: `winget install TigerVNC.TigerVNC`
+  · Linux: `sudo apt install tigervnc-viewer` · macOS:
+  `brew install --cask tigervnc-viewer`
 - the `opencode` CLI on PATH (for step 3)
 - a valid `config.jsonc`; its `opencode.configDir` must contain an
   `opencode.jsonc` with a working model/provider and `"shell": "bash"`
@@ -80,6 +83,8 @@ bun run start:sandbox
   internal `Host(<first-free-from-52222>)` → `Guest(22)` SSH forward
 - Applies `sandbox.cpus`, `sandbox.memory`, and `sandbox.diskSize` during image
   initialization and normal boots
+- With `sandbox.enableDisplay: true`, enables the QEMU display, publishes the
+  live port in `sandbox.cacheDir/vnc-port`, and writes `desktop.png` there
 - Creates and mounts every `sandbox.mounts[].host` directory at its guest path,
   and injects `sandbox.env` into commands routed through the SSH workspace
 - Interactive terminal: waits for **Enter** to stop. Background/CI (stdin EOF):
@@ -87,6 +92,15 @@ bun run start:sandbox
 - Wait for `Sandbox is ready:` (boot + key injection). The launcher does not
   validate sshd; removing OpenSSH from the init script causes the SSH driver to
   fail later as expected.
+- The default image includes rootless Podman for `podmanuser`; verify with
+  `runuser -l podmanuser -c 'podman info'`
+
+For the repository-default cache path, connect to the live display with
+TigerVNC's explicit-port syntax (two colons):
+
+```bash
+vncviewer "127.0.0.1::$(cat .quicksand/sandboxes/vnc-port)"
+```
 
 Verify (works from any host; with the example config the mount holds the
 project root, so README.md is the sentinel):

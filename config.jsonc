@@ -12,6 +12,7 @@
     "cpus": 1,
     "memory": "512M",
     "diskSize": "10G",
+    "enableDisplay": false,
     "initScript": "./run/init.sh",
     "cacheDir": "./.quicksand/sandboxes",
     "mounts": [
