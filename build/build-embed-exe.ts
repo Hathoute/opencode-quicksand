@@ -2,8 +2,8 @@
  * (build/dist/embed-<os>-<arch>[.exe]).
  *
  * Target: EMBED_TARGET env var or first CLI arg — windows-x64 | linux-x64 |
- * linux-arm64 (default: the current platform). Bun compiles for any target
- * from any host, so one Linux CI job can produce all of them.
+ * linux-arm64 | macos-arm64 (default: the current platform). Bun compiles for
+ * any target from any host, so one Linux CI job can produce all of them.
  *
  * The pty native binary for the TARGET platform is embedded the same way
  * upstream opencode does it (packages/cli/script/build.ts): force-install
@@ -19,7 +19,7 @@ import { $ } from "bun"
 import { CHECKOUT_DIR, DIST_DIR } from "./common"
 import { ensureDeps, ensureRepo, syncPoc } from "./repo"
 
-const ALLOWED_TARGETS = ["windows-x64", "linux-x64", "linux-arm64"] as const
+const ALLOWED_TARGETS = ["windows-x64", "linux-x64", "linux-arm64", "macos-arm64"] as const
 type Target = (typeof ALLOWED_TARGETS)[number]
 
 const hostSlug = (): string =>
@@ -40,7 +40,11 @@ console.log(`poc synced -> ${poc}`)
 
 // ---- pty binary for the TARGET platform (upstream's resolveOpencodePty) ----
 
-const ptyPlatform = target.startsWith("windows") ? "win32" : "linux"
+const ptyPlatform = target.startsWith("windows")
+  ? "win32"
+  : target.startsWith("macos")
+    ? "darwin"
+    : "linux"
 const ptyArch = target.split("-")[1] as "x64" | "arm64"
 const ptySuffix = [ptyPlatform, ptyArch, ptyPlatform === "linux" ? "gnu" : undefined]
   .filter(Boolean)
@@ -67,6 +71,7 @@ console.log(`target ${target} (pty: ${ptyName}@${ptyVersion})`)
 
 const exeSuffix = target.startsWith("windows") ? ".exe" : ""
 const final = path.join(DIST_DIR, `embed-${target}${exeSuffix}`)
+const compileTarget = target.startsWith("macos-") ? target.replace(/^macos-/, "darwin-") : target
 
 const result = await Bun.build({
   entrypoints: [path.join(CHECKOUT_DIR, "poc", "embed.ts")],
@@ -79,10 +84,11 @@ const result = await Bun.build({
   // machine-code AOT (`compile: { aot: true }`) is also out: it only builds
   // for the host platform and type-check-gates the whole checkout.
   compile: {
-    // cross-compile target (bun-windows-x64 / bun-linux-x64 / bun-linux-arm64);
+    // cross-compile target (bun-windows-x64 / bun-linux-x64 /
+    // bun-linux-arm64 / bun-darwin-arm64);
     // omitting it compiles for the host platform. outfile MUST be absolute —
     // a relative value is silently ignored and no executable is produced.
-    target: `bun-${target}` as Bun.Build.CompileTarget,
+    target: `bun-${compileTarget}` as Bun.Build.CompileTarget,
     outfile: final,
   },
   plugins: [

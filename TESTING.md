@@ -19,7 +19,7 @@ works per host OS today:
 | 2 · embedder (`bun run start:embed`) | ✅ | ✅ verified | ✅ bun scripts are portable; the `effect` junction becomes a plain symlink |
 | 3 · agent tools in the VM (`opencode run`) | ✅ | ✅ verified end-to-end (shell, Write, Read all executed in the guest) | ⚠️ adapter implemented (`driver-macos.ts`), not yet exercised |
 | Driver-level streaming check | ✅ | ✅ verified (lines ~2s apart, not burst) | ⚠️ same adapter, untested |
-| Standalone packaging (`build:*`) | ✅ exercised | ✅ verified: embed cross-compiles all targets from one host, sandbox built via uv (release CI targets: windows-x64, linux-x64, linux-arm64) | ⚠️ runs from source; no darwin release binaries |
+| Standalone packaging (`build:*`) | ✅ exercised | ✅ verified: embed cross-compiles all targets from one host, sandbox built via uv | ⚠️ CI builds macos-arm64 binaries; not yet exercised on Apple hardware |
 
 "Verified" = exercised end-to-end on that host OS. The POSIX adapters
 (`driver-linux.ts`, `driver-macos.ts`) were originally throwing stubs; the
@@ -193,6 +193,7 @@ bun run build:embed                            # → build/dist/embed-<os>-<arch
 EMBED_TARGET=windows-x64 bun run build:embed   # cross-compiles from any host
 EMBED_TARGET=linux-x64 bun run build:embed
 EMBED_TARGET=linux-arm64 bun run build:embed
+EMBED_TARGET=macos-arm64 bun run build:embed
 bun run build:sandbox                          # → build/dist/sandbox-<os>-<arch>[.exe] (uv + PyInstaller)
 bun run build:all
 ```
@@ -213,10 +214,10 @@ bun run build:all
   at `/data` (`SANDBOX_MOUNT_DIR` overrides). First start extracts the
   archive to the temp dir (~10-20 s)
 - Release CI (`.github/workflows/release.yml`): push a `v*` tag → draft
-  GitHub Release with `embed-{windows-x64.exe,linux-x64,linux-arm64}` (one
-  Linux runner, cross-compiled) + `sandbox-{windows-x64.exe,linux-x64,
-  linux-arm64}` (native runners, uv cache) + checksums. `workflow_dispatch`
-  builds artifacts only
+  GitHub Release with `embed-{windows-x64.exe,linux-x64,linux-arm64,
+  macos-arm64}` (one Linux runner, cross-compiled) +
+  `sandbox-{windows-x64.exe,linux-x64,linux-arm64,macos-arm64}` (native
+  runners, uv cache) + checksums. `workflow_dispatch` builds artifacts only
 
 ## Troubleshooting quick reference
 

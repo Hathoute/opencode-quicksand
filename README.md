@@ -99,12 +99,13 @@ a **draft GitHub Release** with all binaries + checksums, or run it via
 `workflow_dispatch` to produce artifacts only:
 
 - `embed` job: one Linux runner cross-compiles `embed-windows-x64.exe`,
-  `embed-linux-x64`, `embed-linux-arm64`
+  `embed-linux-x64`, `embed-linux-arm64`, `embed-macos-arm64`
 - `sandbox` job: native runners (`windows-latest`, `ubuntu-latest`,
-  `ubuntu-24.04-arm`) build `sandbox-<os>-<arch>` with `setup-uv` caching the
-  ~400 MB quicksand wheels
+  `ubuntu-24.04-arm`, `macos-15`) build `sandbox-<os>-<arch>` with `setup-uv`
+  caching the ~400 MB quicksand wheels
 
-macOS hosts run the source workflow (TESTING.md) but ship no release binaries.
+macOS arm64 release binaries are built in CI but have not yet been exercised
+on Apple hardware.
 
 Note: quicksand's PyPI packages are stubs for its fat image/QEMU wheels — at
 first boot quicksand upgrades them from its own index via `python -m pip`,
