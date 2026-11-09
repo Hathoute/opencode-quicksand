@@ -27,7 +27,8 @@ session, config discovery, and the mounted `data/` directory stay on the host.
   `winget install --id=astral-sh.uv` / `brew install uv`
 - git, and an OpenSSH client (`ssh`, `ssh-keygen`, `ssh-keyscan`) on PATH
 - the `opencode` CLI on PATH (for `opencode run` testing)
-- a Z.AI Coding Plan API key (`ZAI_API_KEY`)
+- an `OPENCODE_CONFIG_DIR` containing `opencode.jsonc` with your model and
+  provider authentication configured (set `"shell": "bash"` for the guest)
 
 ## Quickstart (three terminals)
 
@@ -36,16 +37,17 @@ session, config discovery, and the mounted `data/` directory stay on the host.
 bun run start:sandbox
 
 # 2) opencode embedder on http://localhost:4096 (first run: clone + bun install)
-export ZAI_API_KEY="<key>"
+export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
 bun run start:embed
 
-# 3) drive the agent — every command runs inside the VM
-opencode run --server http://localhost:4096 --auto -m zai-coding-plan/glm-5.3-flash \
+# 3) drive the configured model — every command runs inside the VM
+opencode run --server http://localhost:4096 --auto \
   "Run the shell command: hostname && uname -a && head -5 /data/README.md"
 ```
 
-(Windows: `$env:ZAI_API_KEY = "<key>"` and backtick line continuations — see
-TESTING.md for per-shell variants and the host-platform support table.)
+(Windows: `$env:OPENCODE_CONFIG_DIR = "$HOME\.config\opencode"` and backtick
+line continuations — see TESTING.md for per-shell variants and the
+host-platform support table.)
 
 ## Packaging (standalone executables)
 
@@ -62,7 +64,7 @@ bun run build:all
   `build/build-embed-exe.ts`). Cross-compiles every target from one host; the
   pty binary of the *target* platform is force-installed and embedded via the
   same plugin upstream uses. Needs env vars:
-  `PORT`, `SSH_KEY`, `ZAI_API_KEY`, `WORKSPACE_HOST_DIR`, optional
+  `PORT`, `SSH_KEY`, `OPENCODE_CONFIG_DIR`, `WORKSPACE_HOST_DIR`, optional
   `SSH_DRIVER_LOG`.
 - `sandbox-*` (~330 MB): PyInstaller onefile with interpreter + deps + Ubuntu
   image + QEMU binaries, built in the uv-managed `build` dependency-group.
@@ -85,7 +87,7 @@ bun run build:all
 
 | Variable | Default | Used by |
 |----------|---------|---------|
-| `ZAI_API_KEY` | — | embedder (in-memory DB ⇒ auth via config) |
+| `OPENCODE_CONFIG_DIR` | — (required; must contain `opencode.jsonc`) | embedder model/provider config (the DB is in-memory, so stored auth is not inherited) |
 | `SANDBOX_MOUNT_DIR` | caller's CWD | sandbox: host directory mounted at `/data` |
 | `OPENCODE_COMMIT` | `ced73dc0…` (pinned) | checkout pin; falls back to the sibling `../opencode` checkout's HEAD when present |
 | `EMBED_TARGET` | host platform | `build:embed` cross-compile target |

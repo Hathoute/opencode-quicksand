@@ -11,24 +11,24 @@ import type { PathMap, SshTarget } from "./driver"
 
 const port = Number(process.env.PORT ?? 4096)
 
+// The embedded host uses an isolated in-memory database, so it cannot inherit
+// provider credentials from the caller's normal opencode installation. Load
+// the complete config (including provider/model settings) from an explicit
+// directory instead. Resolving here also makes relative paths work for the
+// standalone executable; build/start-embed.ts resolves them before changing
+// the child process cwd.
+const configDirValue = process.env.OPENCODE_CONFIG_DIR?.trim()
+if (!configDirValue) throw new Error("OPENCODE_CONFIG_DIR is required and must contain opencode.jsonc")
+const configDir = path.resolve(configDirValue)
+const configFile = path.join(configDir, "opencode.jsonc")
+if (!existsSync(configFile)) throw new Error(`opencode config not found: ${configFile}`)
+
 // sandbox VM defaults: quicksand ubuntu VM exposing sshd on host 127.0.0.1:2222
 const sshTarget: SshTarget = {
   host: process.env.SSH_HOST ?? "localhost",
   port: Number(process.env.SSH_PORT ?? 2222),
   user: process.env.SSH_USER ?? "root",
   keyFile: process.env.SSH_KEY ?? "",
-}
-
-// The embedded host defaults to an in-memory database, so globally stored
-// credentials (`opencode auth login`) are invisible here. Inject config
-// instead: shell=bash makes the shell tool POSIX-facing (the ssh guest runs
-// bash regardless of the host platform), and ZAI_API_KEY -> provider options.
-const apiKey = process.env.ZAI_API_KEY
-const config = {
-  content: JSON.stringify({
-    shell: "bash",
-    ...(apiKey === undefined ? {} : { provider: { "zai-coding-plan": { options: { apiKey } } } }),
-  }),
 }
 
 // host directory mounted at /data in the sandbox (defaults to the caller's
@@ -91,7 +91,7 @@ const program = Effect.gen(function* () {
   const host = yield* Effect.acquireRelease(
     EmbeddedHost.create({
       workspaceProviders: { ssh: sshWorkspaceDriver(sshTarget, pathMap) },
-      config,
+      config: { directory: configDir },
     }),
     (host) => Effect.promise(host.close),
   )

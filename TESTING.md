@@ -38,7 +38,9 @@ Prerequisites (one-time):
 - OpenSSH client on PATH (`ssh`, `ssh-keygen`, `ssh-keyscan`) — Windows: the
   "OpenSSH Client" optional capability · Linux: `openssh-client` · macOS: built in
 - the `opencode` CLI on PATH (for step 3)
-- a Z.AI Coding Plan API key (`ZAI_API_KEY` env or secret)
+- an `OPENCODE_CONFIG_DIR` containing `opencode.jsonc` with a working model and
+  provider authentication; include `"shell": "bash"` so shell commands target
+  the Linux guest
 
 ---
 
@@ -78,15 +80,16 @@ into a hard `Host key verification failed`.)
 
 ## 2. Start the opencode embed server
 
-Set the key, then start — any host:
+Set the config directory, then start — any host. Relative paths are resolved
+from the directory where `bun run start:embed` is invoked:
 
 ```bash
-export ZAI_API_KEY="<your Z.AI key>"     # bash (Linux / macOS)
+export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"     # bash (Linux / macOS)
 bun run start:embed
 ```
 
 ```powershell
-$env:ZAI_API_KEY = "<your Z.AI key>"     # PowerShell (Windows)
+$env:OPENCODE_CONFIG_DIR = "$HOME\.config\opencode"   # PowerShell (Windows)
 bun run start:embed
 ```
 
@@ -94,7 +97,8 @@ What it does: fetches the opencode checkout at the pinned commit into
 `build/opencode` (reuses an existing clone), syncs `opencode/*.ts` into its
 `poc/`, `bun install --frozen-lockfile`, creates the `effect` junction (a
 plain symlink on Linux/macOS), then runs `bun poc/embed.ts` → server on
-`http://localhost:4096` (sets `SSH_*`, `WORKSPACE_HOST_DIR`, `SSH_DRIVER_LOG=1`).
+`http://localhost:4096` (loads `OPENCODE_CONFIG_DIR/opencode.jsonc` and sets
+`SSH_*`, `WORKSPACE_HOST_DIR`, `SSH_DRIVER_LOG=1`).
 
 Ready when you see:
 
@@ -112,14 +116,12 @@ Verified on Windows and Linux hosts (macOS adapter implemented, untested):
 
 ```powershell
 opencode run --server http://localhost:4096 --auto `
-  -m zai-coding-plan/glm-5.3-flash `
   "Run 'uname -r' and create a file sandbox-test.txt in the working directory `
   whose single line is that kernel version. Show me the final file content."
 ```
 
 ```bash
 opencode run --server http://localhost:4096 --auto \
-  -m zai-coding-plan/glm-5.3-flash \
   "Run 'uname -r' and create a file sandbox-test.txt in the working directory whose single line is that kernel version. Show me the final file content."
 ```
 
@@ -151,7 +153,7 @@ Useful test prompts:
 # commands execute inside the VM (hostname/uname prove it; /data = your CWD).
 # Avoid `;` chains + unicode punctuation in run instructions — the portable
 # shell scanner rejects them (FINDINGS.md #12). Use && chains instead.
-opencode run --server http://localhost:4096 --auto -m zai-coding-plan/glm-5.3-flash `
+opencode run --server http://localhost:4096 --auto `
   "Run the shell command: hostname && whoami && uname -a && head -3 /data/README.md"
 ```
 
@@ -203,7 +205,7 @@ bun run build:all
   on Bun 1.4.4, and machine-code AOT cannot cross-compile; notes in
   `build/build-embed-exe.ts`). Cross-compiles every target from one host; the
   pty binary of the *target* platform is force-installed and embedded
-  (upstream's technique). Runs with `PORT`, `SSH_KEY`, `ZAI_API_KEY`,
+  (upstream's technique). Runs with `PORT`, `SSH_KEY`, `OPENCODE_CONFIG_DIR`,
   `WORKSPACE_HOST_DIR` (+ optional `SSH_DRIVER_LOG`) — no repo, bun or
   node_modules needed. Verified end-to-end: the compiled linux-x64 binary
   served an agent session whose tools executed inside the VM
@@ -228,7 +230,7 @@ bun run build:all
 | Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — clear the stale user entry: `ssh-keygen -R "[127.0.0.1]:2222"` (the driver is unaffected: the embedder re-pins `quicksand/ssh/known_hosts` each boot) |
 | MCP server spawn exits 127 in the guest (e.g. `/…/browse mcp`) | host-installed MCP binaries don't exist in the VM (FINDINGS.md #14); harmless for Read/Write/Shell |
 | `uv: command not found` during start/build | install uv (see prerequisites) — it also manages the Python interpreter, so no system python is needed |
-| `Model unavailable: zai-coding-plan/...` | embedder DB is in-memory; start embed with `ZAI_API_KEY` set (FINDINGS.md #1) |
+| `Model unavailable: provider/model` | embedder DB is in-memory; configure the model and provider authentication in `OPENCODE_CONFIG_DIR/opencode.jsonc` (FINDINGS.md #1) |
 | `Transport: ECONNRESET` mid-session | embedder started with old `embed.ts` (no `idleTimeout: 255`); restart via `bun run start:embed` (FINDINGS.md #2c) |
 | Session not placed (`session undefined`) | old `embed.ts` without the `event.data.sessionID` fix; resync + restart |
 | `command not found` for a Windows path in the guest (Windows) | old `driver.ts` without `guestShell()`; resync + restart |

@@ -113,5 +113,5 @@ jobs:
         run: |
           gh release create "$TAG" --draft --generate-notes \
             --title "$TAG" \
-            --notes "Standalone binaries. \`embed-\*: env vars PORT, SSH_KEY, ZAI_API_KEY, WORKSPACE_HOST_DIR (+SSH_DRIVER_LOG). \`sandbox-*\`: boots the Ubuntu VM (sshd on 127.0.0.1:2222, mounts the start directory at /data; SANDBOX_MOUNT_DIR overrides). First sandbox start extracts its archive to the temp dir (~10-20 s). See TESTING.md for the full workflow." \
+            --notes "Standalone binaries. \`embed-\*: env vars PORT, SSH_KEY, OPENCODE_CONFIG_DIR (containing opencode.jsonc), WORKSPACE_HOST_DIR (+SSH_DRIVER_LOG). \`sandbox-*\`: boots the Ubuntu VM (sshd on 127.0.0.1:2222, mounts the start directory at /data; SANDBOX_MOUNT_DIR overrides). First sandbox start extracts its archive to the temp dir (~10-20 s). See TESTING.md for the full workflow." \
             dist/*

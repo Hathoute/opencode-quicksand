@@ -6,29 +6,20 @@ host `./data` mounted at `/data`, NetworkMode.FULL) + opencode embedder
 
 ## 1. Embedded host can't see global credentials (in-memory DB)
 
-**Symptom:** `opencode run --server http://localhost:4096 -m zai-coding-plan/glm-5.3-flash`
-fails with `Model unavailable: zai-coding-plan/glm-5.3-flash`, even though
-`opencode auth export` shows the stored, active credential.
+**Symptom:** `opencode run --server http://localhost:4096` reports that the
+configured model is unavailable, even though the normal opencode installation
+has an active stored credential.
 
 **Root cause:** `packages/sdk/src/internal/host.ts` boots the embedded server with
-`database: { path: ":memory:", ...server.database }`. Credentials live in the global DB
-(`~/.local/share/opencode/opencode.db`, migrated from legacy `auth.json`), so the
-embedder's empty in-memory DB means the `zai-coding-plan` provider never activates
-(`/api/provider` lists only the built-in `opencode` provider).
+`database: { path: ":memory:", ...server.database }`. Credentials stored in the
+normal global DB (`~/.local/share/opencode/opencode.db`, migrated from legacy
+`auth.json`) are therefore invisible to the embedder.
 
-**Fix (applied):** inject provider auth via server options config —
-`ServerOptions.config.content` accepts a JSON config string:
-
-```ts
-config: {
-  content: JSON.stringify({
-    provider: { "zai-coding-plan": { options: { apiKey: process.env.ZAI_API_KEY } } },
-  }),
-}
-```
-
-`run_opencode.ps1 -ApiKey <key>` (defaults to `$env:ZAI_API_KEY`) → sets
-`ZAI_API_KEY` → `embed.ts` builds the config.
+**Fix (applied):** require `OPENCODE_CONFIG_DIR` and pass it through
+`ServerOptions.config.directory`. The directory contains `opencode.jsonc`, which
+defines the model and provider authentication (including `{env:...}` or
+`{file:...}` substitutions). This also preserves OpenCode's native JSONC parsing,
+supplementary config directories, and config watching.
 
 **Alternative:** pass `database: { path: "<global>/opencode.db" }` in
 `EmbeddedHost.create` options to share the global store.
@@ -55,13 +46,13 @@ platform (`packages/core/src/shell/select.ts`, falls back to `win()[0]` = PowerS
 when no config shell is set).
 
 **Fix (applied, two parts):**
-1. `embed.ts` injects `shell: "bash"` in the embedder config, so the tool resolves a
-   bash shell and the model writes POSIX commands.
+1. `OPENCODE_CONFIG_DIR/opencode.jsonc` sets `shell: "bash"`, so the tool resolves
+   a bash shell and the model writes POSIX commands.
 2. `driver.ts` `guestShell()` translates Windows shell invocations at the spawner
    boundary (same philosophy as the path map): powershell/pwsh/cmd → guest
    `bash -c <script>`; `*.exe` bash paths → plain `bash`.
 
-**Verified end-to-end** (`opencode run --server … --auto -m zai-coding-plan/glm-5.3-flash`
+**Verified end-to-end** (`opencode run --server … --auto` with a configured model,
 prompted to run `hostname; whoami; uname -a; cat /data/data.txt`):
 
 ```
