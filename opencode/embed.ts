@@ -48,8 +48,14 @@ const hostDataDir = process.env.WORKSPACE_HOST_DIR
 const knownHosts =
   sshTarget.keyFile !== "" ? path.join(path.dirname(sshTarget.keyFile), "known_hosts") : undefined
 if (knownHosts !== undefined) {
+  // Scan the forward's literal bind address, not the configured host name:
+  // "localhost" often resolves to ::1 first (Linux default), the port forward
+  // listens on 127.0.0.1 only, and ssh-keyscan — unlike the ssh client — does
+  // not fall back across address families, so scanning "localhost" yields
+  // nothing and every driver call pays the accept-and-discard warning.
+  const scanHost = sshTarget.host === "localhost" ? "127.0.0.1" : sshTarget.host
   const scan = Bun.spawnSync([
-    "ssh-keyscan", "-p", String(sshTarget.port), "-t", "ed25519,rsa", sshTarget.host,
+    "ssh-keyscan", "-p", String(sshTarget.port), "-t", "ed25519,rsa", scanHost,
   ])
   const keys = scan.stdout
     .toString()
