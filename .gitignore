@@ -1,0 +1,8 @@
+build/dist
+build/opencode
+
+quicksand/.venv
+quicksand/data
+quicksand/ssh
+
+*.log
