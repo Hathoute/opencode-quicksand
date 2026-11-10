@@ -347,3 +347,22 @@ response body, which Bun reports as an unhandled rejection and treats as fatal.
 Cancelling Bun's returned response body still cancels the embedded stream and
 releases the subscription, but the expected socket close no longer becomes a
 server exception. Other endpoints retain their original abort propagation.
+
+## 19. Bun module misses bypassed plugin entrypoint fallback
+
+**Symptom:** the valid Superpowers package was installed, but plugin inventory
+reported `Plugin failed to load` and none of its skills appeared.
+
+**Root cause:** plugin discovery probes optional package subpaths such as
+`superpowers/server`, then falls back to the package root when they are absent.
+`Bun.resolveSync` throws a coded `ResolveMessage` object for those misses, but it
+is not an `Error`. The shared plugin resolver only recognizes coded `Error`
+instances, so the first absent optional entrypoint escaped instead of allowing
+the root fallback.
+
+**Fix:** Bun's `resolveModule` boundary wraps non-Error resolver failures in
+`Error`, preserving their `code` and original value as `cause`. The ordinary
+missing-entrypoint handling can then continue to the valid root plugin export.
+The change and its regression test live in
+`patches/opencode/resolve-module.patch`; `ensureRepo()` applies that tracked
+patch idempotently after checking out the configured OpenCode tag.

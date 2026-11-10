@@ -1,8 +1,10 @@
 import { cpSync, existsSync, symlinkSync } from "node:fs"
 import path from "path"
 import { $ } from "bun"
-import { CHECKOUT_DIR, POC_DIR, REPO_URL } from "./common"
+import { CHECKOUT_DIR, POC_DIR, PROJECT_ROOT, REPO_URL } from "./common"
 import { config } from "./config"
+
+const patches = [path.join(PROJECT_ROOT, "patches", "opencode", "resolve-module.patch")]
 
 /** Clone (shallow, pinned commit) or reuse the opencode checkout. */
 export const ensureRepo = async (commit: string = config.opencode.tag) => {
@@ -17,8 +19,29 @@ export const ensureRepo = async (commit: string = config.opencode.tag) => {
     .then((t) => t.trim())
     .catch(() => "")
   if (head !== commit) {
+    await reversePatches()
     await $`git -C ${CHECKOUT_DIR} fetch --depth 1 origin ${commit}`.quiet()
     await $`git -C ${CHECKOUT_DIR} checkout --force FETCH_HEAD`.quiet()
+  }
+  await applyPatches()
+}
+
+const reversePatches = async () => {
+  for (const patch of patches.toReversed()) {
+    const check = await $`git -C ${CHECKOUT_DIR} apply --reverse --check ${patch}`.nothrow().quiet()
+    if (check.exitCode === 0) await $`git -C ${CHECKOUT_DIR} apply --reverse ${patch}`.quiet()
+  }
+}
+
+const applyPatches = async () => {
+  for (const patch of patches) {
+    const check = await $`git -C ${CHECKOUT_DIR} apply --check ${patch}`.nothrow().quiet()
+    if (check.exitCode === 0) {
+      await $`git -C ${CHECKOUT_DIR} apply ${patch}`.quiet()
+      continue
+    }
+    const applied = await $`git -C ${CHECKOUT_DIR} apply --reverse --check ${patch}`.nothrow().quiet()
+    if (applied.exitCode !== 0) throw new Error(`OpenCode patch does not apply cleanly: ${patch}`)
   }
 }
 

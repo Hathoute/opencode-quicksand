@@ -1,0 +1,40 @@
+diff --git a/packages/util/src/runtime/import.bun.ts b/packages/util/src/runtime/import.bun.ts
+--- a/packages/util/src/runtime/import.bun.ts
++++ b/packages/util/src/runtime/import.bun.ts
+@@ -7,4 +7,13 @@
+ export function resolveModule(specifier: string, directory: string) {
+-  const resolved = Bun.resolveSync(specifier, directory)
+-  return resolved.startsWith("node:") ? resolved : pathToFileURL(resolved).href
++  try {
++    const resolved = Bun.resolveSync(specifier, directory)
++    return resolved.startsWith("node:") ? resolved : pathToFileURL(resolved).href
++  } catch (cause) {
++    if (cause instanceof Error) throw cause
++    // Bun.resolveSync throws ResolveMessage objects outside the Error hierarchy.
++    // Normalize them so callers can classify optional entrypoint misses by code.
++    const error = new Error(String(cause), { cause })
++    if (typeof cause !== "object" || cause === null || !("code" in cause)) throw error
++    throw Object.assign(error, { code: cause.code })
++  }
+ }
+diff --git a/packages/util/test/runtime-import.test.ts b/packages/util/test/runtime-import.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/util/test/runtime-import.test.ts
+@@ -0,0 +1,16 @@
++import { expect, test } from "bun:test"
++import path from "path"
++import { resolveModule } from "../src/runtime/import.bun.js"
++
++test("normalizes Bun resolver failures as coded errors", () => {
++  const failure = (() => {
++    try {
++      resolveModule(path.join(import.meta.dir, "fixtures", "missing-runtime-module"), import.meta.dir)
++    } catch (error) {
++      return error
++    }
++  })()
++
++  expect(failure).toBeInstanceOf(Error)
++  expect(failure).toHaveProperty("code", "ERR_MODULE_NOT_FOUND")
++})
