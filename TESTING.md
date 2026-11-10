@@ -3,14 +3,14 @@
 Three pieces run in this order — each in its **own terminal** so they stay alive:
 
 ```
-[0] bun run init:sandbox    → creates <sandbox.image>-<init-script-sha256> when absent
-[1] bun run start:sandbox   → configured VM: SSH on the first free host port from 52222, launch directory mounted at /data
+[0] bun run init:sandbox    → optional update-only lifecycle run
+[1] bun run start:sandbox   → updates <sandbox.image>-<imageTag>, then exposes SSH and /data
 [2] bun run start:embed     → opencode embedder on config.jsonc's opencode.port
 [3] opencode run            → drives the agent; every Read/Write/Shell executes in the VM
 ```
 
-Steps 0–2 can instead share one terminal via `bun run start:opencode`. The
-launcher initializes the image when needed, waits for sandbox readiness, and on
+Steps 1–2 can instead share one terminal via `bun run start:opencode`. The
+launcher applies the image lifecycle, waits for sandbox readiness, and on
 CTRL+C stops the embedder before closing the sandbox gracefully.
 
 ## Host platform support
@@ -60,26 +60,25 @@ PowerShell; the VM mounts the launch directory at `/data`):
 ```bash
 cd opencode-quicksand
 cp -R run-template run   # first setup only; run/ is gitignored
-bun run init:sandbox
 bun run start:sandbox
 ```
 
 ```powershell
-bun run init:sandbox
 bun run start:sandbox
 ```
 
-- `init:sandbox` hashes the exact init-script bytes. If
-  `sandbox.cacheDir/<sandbox.image>-<sha256>` does not exist, it boots
-  `sandbox.image`, runs the file with `bash -s`, and saves the resulting disk
+- Each start loads `sandbox.cacheDir/<sandbox.image>-<sandbox.imageTag>` when it
+  exists, or starts from a fresh `sandbox.image` otherwise
+- Before readiness, it runs `sandbox.initScript` with
+  `SANDBOX_LIFECYCLE=create|update`, flattens the resulting disk, and atomically
+  replaces the tagged image. The script must be idempotent
 - While the script runs, its sibling `init/` directory is mounted at
   `/mnt/init`. Mount contents are not part of the saved image; the script must
-  copy required files to the guest filesystem. Changing only mounted files does
-  not change the image hash
+  copy required files to the guest filesystem
 - Generates `quicksand/ssh/quicksand_demo` (+`.pub`) on first run and injects the
   pubkey into the VM (key auth, `BatchMode` — no password prompts for the driver)
-- Boots the saved `<sandbox.image>-<sha256>` image with `NetworkMode.FULL`, mounts
-  the launch directory at `/data`, applies `sandbox.portMapping`, and adds an
+- Boots the selected image with `NetworkMode.FULL`, mounts the launch directory
+  at `/data`, applies `sandbox.portMapping`, and adds an
   internal `Host(<first-free-from-52222>)` → `Guest(22)` SSH forward
 - Applies `sandbox.cpus`, `sandbox.memory`, and `sandbox.diskSize` during image
   initialization and normal boots
@@ -255,8 +254,8 @@ bun run build:all
   dependency-group (interpreter + quicksand + Ubuntu image + QEMU binaries;
   other `sandbox.image` providers must also be packaged to work standalone).
   PyInstaller cannot cross-compile — build on the target platform. Place
-  `config.jsonc` in the start directory (or pass `--config <file>`), run once
-  with `--init`, then run normally. It creates `ssh/` next to itself and mounts
+  `config.jsonc` in the start directory (or pass `--config <file>`) and run it
+  normally; `--init` is optional update-only mode. It creates `ssh/` next to itself and mounts
   the current working directory at `/data`. First start extracts the archive to the temp
   dir (~10-20 s)
 - Release CI (`.github/workflows/release.yml`): push a `v*` tag → draft
@@ -271,7 +270,7 @@ bun run build:all
 |---------|-------------|
 | `sandbox.initScript does not exist` | fix the path in `config.jsonc`; relative paths resolve from the config file |
 | `sandbox init mount does not exist` | create an `init/` directory beside `sandbox.initScript` |
-| `Image not found: ...` | run `bun run init:sandbox` before `start:sandbox`, or use `start:opencode` |
+| `Image not found: ...` | install the provider selected by `sandbox.image`; a missing tagged save is created automatically |
 | `Host key verification failed` on the first manual `ssh` (under `BatchMode`) | fresh host: no known_hosts entry yet — add `-o StrictHostKeyChecking=accept-new` (as in the step 1 verify) |
 | Every driver call logs `Warning: Permanently added '[localhost]:<host-port>'`; embedder logged `ssh-keyscan got no host key` | IPv6-first `localhost` + forward bound to 127.0.0.1 (FINDINGS.md #13); fixed in `embed.ts` — resync + restart the embedder with the sandbox up |
 | Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — read `ssh-port` under `sandbox.cacheDir`, then clear it with `ssh-keygen -R "[127.0.0.1]:<host-port>"` (the driver re-pins `quicksand/ssh/known_hosts` each boot) |

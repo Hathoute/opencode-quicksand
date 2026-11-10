@@ -1,5 +1,5 @@
-/** Starts the sandbox followed by the opencode embedder. Ctrl+C stops the
- * embedder first, then sends Enter to the sandbox for a graceful VM shutdown. */
+/** Starts the self-updating sandbox followed by the opencode embedder. Ctrl+C
+ * stops the embedder first, then sends Enter for a graceful VM shutdown. */
 
 import { existsSync, statSync } from "node:fs"
 import path from "path"
@@ -10,7 +10,6 @@ const initScript = config.sandbox.initScript
 if (!existsSync(initScript) || !statSync(initScript).isFile())
   throw new Error(`sandbox.initScript does not exist or is not a file: ${initScript}`)
 
-let initializer: ReturnType<typeof startInitSandbox> | undefined
 let sandbox: ReturnType<typeof startSandbox> | undefined
 let embed: ReturnType<typeof startEmbed> | undefined
 let signalCount = 0
@@ -26,7 +25,6 @@ const onSignal = (name: NodeJS.Signals) => {
   console.error("\nSecond signal received; forcing child processes to stop")
   if (embed) killTree(embed, "SIGKILL")
   if (sandbox) killTree(sandbox, "SIGKILL")
-  if (initializer) killTree(initializer, "SIGKILL")
   process.exit(name === "SIGINT" ? 130 : 143)
 }
 
@@ -47,19 +45,7 @@ try {
 process.exitCode = exitCode
 
 async function run() {
-  console.log(`Initializing sandbox image from ${initScript}...`)
-  initializer = startInitSandbox()
-  const initialization = await Promise.race([
-    initializer.exited.then((code) => ({ type: "init-exit" as const, code })),
-    signaled,
-  ])
-  if (initialization.type === "signal") return initialization.code
-  if (initialization.code !== 0) {
-    console.error(`Sandbox initialization failed (${initialization.code})`)
-    return initialization.code || 1
-  }
-
-  console.log("Starting sandbox...")
+  console.log(`Starting sandbox and applying ${initScript}...`)
   sandbox = startSandbox()
 
   let ready = () => {}
@@ -92,16 +78,6 @@ async function run() {
   const code = startup.type === "signal" ? startup.code : startup.code || 1
   if (startup.type === "sandbox-exit") console.error(`Sandbox exited before becoming ready (${startup.code})`)
   return code
-}
-
-function startInitSandbox() {
-  return Bun.spawn([process.execPath, path.join(PROJECT_ROOT, "build", "init-sandbox.ts"), "--config", CONFIG_FILE], {
-    stdin: "ignore",
-    stdout: "inherit",
-    stderr: "inherit",
-    detached: true,
-    env: { ...process.env, PYTHONUNBUFFERED: "1" },
-  })
 }
 
 function startSandbox() {
@@ -170,13 +146,6 @@ async function shutdown() {
       if (!(await exitedWithin(sandbox, 10_000))) killTree(sandbox, "SIGKILL")
       await sandbox.exited
     }
-  }
-
-  if (initializer?.exitCode === null) {
-    console.log("Stopping sandbox initialization...")
-    killTree(initializer, "SIGTERM")
-    if (!(await exitedWithin(initializer, 10_000))) killTree(initializer, "SIGKILL")
-    await initializer.exited
   }
 }
 

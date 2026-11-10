@@ -1,6 +1,7 @@
-/** Starts the content-addressed sandbox VM from source (quicksand/sandbox.py) inside the
+/** Starts the tagged sandbox VM from source (quicksand/sandbox.py) inside the
  * uv-managed project environment (pyproject.toml + uv.lock; uv also manages
- * the interpreter via .python-version, so no system python is needed).
+ * the interpreter via .python-version, so no system python is needed). The
+ * init lifecycle runs and replaces the tagged image before readiness.
  * Long-running: interactive terminal waits for Enter; non-interactive (CI)
  * holds the VM open for 5 minutes. */
 

@@ -9,6 +9,7 @@
   },
   "sandbox": {
     "image": "ubuntu",
+    "imageTag": "default",
     "cpus": 1,
     "memory": "512M",
     "diskSize": "10G",

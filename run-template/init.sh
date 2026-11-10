@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "${SANDBOX_LIFECYCLE:-}" in
+  create|update) ;;
+  *)
+    printf 'Unsupported sandbox lifecycle: %s\n' "${SANDBOX_LIFECYCLE:-unset}" >&2
+    exit 1
+    ;;
+esac
+
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   openssh-server \

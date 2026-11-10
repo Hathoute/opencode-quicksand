@@ -1,4 +1,4 @@
-/** Creates the content-addressed sandbox image when it does not exist. */
+/** Applies the init lifecycle once, replaces the tagged image, and exits. */
 
 import path from "path"
 import { $ } from "bun"

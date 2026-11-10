@@ -43,6 +43,7 @@ export const loadRuntimeConfig = async (file: string) => {
     },
     sandbox: {
       image: string(sandbox.image ?? "ubuntu", "sandbox.image"),
+      imageTag: imageTag(sandbox.imageTag ?? "default", "sandbox.imageTag"),
       cpus: positiveInteger(sandbox.cpus ?? 1, "sandbox.cpus"),
       memory: string(sandbox.memory ?? "512M", "sandbox.memory"),
       diskSize: string(sandbox.diskSize ?? "10G", "sandbox.diskSize"),
@@ -91,6 +92,15 @@ function positiveInteger(value: unknown, name: string) {
 function boolean(value: unknown, name: string) {
   if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`)
   return value
+}
+
+function imageTag(value: unknown, name: string) {
+  const text = string(value, name)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(text))
+    throw new Error(
+      `${name} must start with an alphanumeric character and contain only letters, digits, '.', '_', or '-'`,
+    )
+  return text
 }
 
 function endpoint(value: unknown, name: string): PortEndpoint {

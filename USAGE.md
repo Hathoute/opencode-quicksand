@@ -81,12 +81,13 @@ relative to the config file itself (`~` is supported).
   // ── sandbox VM ───────────────────────────────────────────────────────
   "sandbox": {
     "image": "ubuntu",        // base image
+    "imageTag": "default",    // saved as ubuntu-default
     "cpus": 1,
     "memory": "512M",
     "diskSize": "10G",        // sparse qcow2
     "enableDisplay": false,   // true + TigerVNC viewer = see the VM desktop
-    // Guest provisioning run ONCE at image creation (apt installs etc.).
-    // Its SHA-256 names the image: edit it → next `--init` rebuilds.
+    // Idempotent guest lifecycle run before every start (apt installs etc.).
+    // SANDBOX_LIFECYCLE is "create" or "update".
     // Keep it LF-ended; CRLF breaks bash on the guest.
     "initScript": "./run/init.sh",
     // Image storage + the published ssh-port file.
@@ -131,13 +132,15 @@ checkouts): copy it once and edit — `run/` is gitignored.
 Extract the zip (`sandbox-<os>-<arch>.zip` → `sandbox-<os>-<arch>/sandbox.exe`
 plus its `_internal/` support files). Run that `sandbox.exe` from the directory
 whose contents should appear at `/data` in the VM (pass `--config` when
-`config.jsonc` is elsewhere). First use bakes the image (boots the VM once,
-runs `initScript`, saves it — several minutes; later boots reuse it):
+`config.jsonc` is elsewhere). Every run starts from the tagged image (or a
+fresh base on first use), runs `initScript`, and replaces the tagged image:
 
 ```bash
 cd /path/to/your/workspace          # this becomes /data
-path/to/sandbox-windows-x64/sandbox.exe --config path/to/config.jsonc --init   # first run only
-path/to/sandbox-windows-x64/sandbox.exe --config path/to/config.jsonc          # every run
+path/to/sandbox-windows-x64/sandbox.exe --config path/to/config.jsonc
+
+# Optional update-only mode: apply initScript, replace the image, then exit.
+path/to/sandbox-windows-x64/sandbox.exe --config path/to/config.jsonc --init
 ```
 
 What happens:
@@ -147,6 +150,8 @@ What happens:
 - boots the VM, mounts the current directory at `/data`, applies
   `sandbox.mounts` and `sandbox.portMapping`, forwards guest SSH to the first
   free loopback port from 52222 (published to `sandbox.cacheDir/ssh-port`)
+- runs `initScript` with `SANDBOX_LIFECYCLE=create|update`, then atomically
+  replaces `<sandbox.image>-<sandbox.imageTag>` before reporting readiness
 - prints `Sandbox is ready` when SSH answers
 
 Stop it with **Enter** in a console; when stdin is closed (background/CI) it

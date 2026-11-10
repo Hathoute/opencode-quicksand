@@ -309,22 +309,22 @@ selects the environment WITHOUT changing the child's cwd — critical because
 sandbox.py mounts its CWD at /data in the guest). PyInstaller lives in a
 `build` dependency-group so runtime syncs stay slim.
 
-## 17. Sandbox initialization is content-addressed
+## 17. Sandbox initialization uses a tagged rolling image
 
-The sandbox no longer installs OpenSSH on every boot. `sandbox.image` selects
-the Quicksand base image, while `sandbox.initScript` points to a bash file whose
-exact bytes are SHA-256 hashed. `init:sandbox` boots that base, runs the script,
-and saves the disk as `sandbox.cacheDir/<sandbox.image>-<sha256>`; subsequent
-starts boot that save.
-Changing the script automatically selects a new image. Normal startup only
-refreshes the generated SSH public key and deliberately does not validate
-sshd, so custom scripts own the guest's SSH behavior completely.
+`sandbox.image` selects the Quicksand base image and `sandbox.imageTag` names
+the persistent save as `<image>-<imageTag>`. If that save is absent, startup
+uses a fresh base image. Every start runs `sandbox.initScript`, with
+`SANDBOX_LIFECYCLE=create` or `update`, before exposing the VM.
 
-Initialization also mounts the script's sibling `init/` directory at
-`/mnt/init`. Quicksand excludes mounts from saves, so those files are not
-persisted unless the script copies them into the guest filesystem. The saved
-image name combines the configured base-image name with the init script hash;
-changing mounted files alone does not select a new image.
+After a successful lifecycle run, the complete disk is flattened to one qcow2
+overlay and atomically replaces the tagged save. The old image remains available
+for recovery until the VM update succeeds. A failed or interrupted update is
+rolled back on the next start instead of leaving a partial image.
+
+The script's sibling `init/` directory is mounted at `/mnt/init` on every run.
+Quicksand excludes mounts from saves, so those files are not persisted unless
+the script copies them into the guest filesystem. Lifecycle scripts must be
+idempotent because `update` runs before every sandbox becomes ready.
 
 ## 18. Closing the CLI event stream crashed the embedder
 

@@ -49,21 +49,23 @@ run_opencode
 ```
 
 On first use the launcher copies `config.jsonc` and `run-template/` to
-`~/.opencode-quicksand/`. It then initializes the image, starts the sandbox,
-and starts the embedder. CTRL+C stops the embedder before closing the sandbox.
+`~/.opencode-quicksand/`. Every start runs the init lifecycle, replaces the
+tagged image, starts the sandbox, and then starts the embedder. CTRL+C stops
+the embedder before closing the sandbox.
 
 The individual repository scripts remain available for development:
 
-Run steps 1 and 2 together with `bun run start:opencode`. It creates the
-content-addressed sandbox image when needed. Pressing CTRL+C stops the embedder
-first and then closes the sandbox gracefully.
+Run steps 1 and 2 together with `bun run start:opencode`. Pressing CTRL+C stops
+the embedder first and then closes the sandbox gracefully.
 
 ```bash
 # one-time runtime setup (run/ is gitignored)
 cp -R run-template run
 
-# 1) initialize the image, then start the VM on sandbox.portMapping
+# optional: apply init.sh, replace the tagged image, then exit
 bun run init:sandbox
+
+# 1) apply init.sh, replace the tagged image, and start the VM
 bun run start:sandbox
 
 # 2) opencode embedder on the configured opencode.port (first run: clone + bun install)
@@ -97,7 +99,8 @@ bun run build:all
   interpreter + deps + Ubuntu image + QEMU binaries, built in the uv-managed
   `build` dependency-group. PyInstaller cannot cross-compile — build on the
   target platform (CI does). Reads `config.jsonc` from its start directory by
-  default; pass `--config <file>`. Run once with `--init`, then run normally.
+  default; pass `--config <file>`. Every normal run updates the tagged image;
+  `--init` performs the same update and exits instead of holding the VM open.
   The VM mounts the current working directory at `/data`. Nothing extracts to
   the temp dir at runtime (onedir executes in place, so machines whose policy
   blocks executing from `%TEMP%` — WinError 1260 — work too).
@@ -106,9 +109,9 @@ bun run build:all
 
 | Command | What it does |
 |---------|--------------|
-| `bun run init:sandbox` | hashes `sandbox.initScript`, mounts its sibling `init/` at `/mnt/init`, and creates `sandbox.cacheDir/<sandbox.image>-<sha256>` when absent |
-| `bun run start:opencode` | initializes and starts the sandbox, waits for readiness, then starts the embedder; CTRL+C stops both in order |
-| `bun run start:sandbox` | boots the matching `<sandbox.image>-<sha256>` image (interactive: Enter stops; CI: 5-min hold) |
+| `bun run init:sandbox` | runs the init lifecycle, atomically replaces `<sandbox.image>-<sandbox.imageTag>`, then exits |
+| `bun run start:opencode` | updates and starts the sandbox, waits for readiness, then starts the embedder; CTRL+C stops both in order |
+| `bun run start:sandbox` | starts from the tagged image or a fresh base, runs init, replaces the image, then holds the VM open |
 | `bun run start:embed` | fetches `opencode.tag`, syncs `opencode/*.ts` → `build/opencode/poc`, installs dependencies, and starts the embedder |
 | `bun run build:embed` | compiles `embed-<target>` for `EMBED_TARGET` (windows-x64, linux-x64, linux-arm64; default: host) |
 | `bun run build:sandbox` | `uv sync --frozen --group build`, warm the quicksand fat wheels from the quicksand index, then PyInstaller **onedir** as `sandbox-<os>-<arch>/` + `sandbox-<os>-<arch>.zip` |
@@ -130,13 +133,14 @@ versioned.
 | `opencode.cacheDir` | persistent embedder state (`opencode.db`) |
 | `opencode.tag` | Git tag, branch, or commit fetched for the pinned checkout |
 | `opencode.port` | embedder HTTP port |
-| `sandbox.image` | Quicksand base image used during initialization (defaults to `ubuntu`; its provider must be installed) |
+| `sandbox.image` | Quicksand base image type (defaults to `ubuntu`; its provider must be installed) |
+| `sandbox.imageTag` | persistent image tag; the save is `<sandbox.image>-<sandbox.imageTag>` (default `default`) |
 | `sandbox.cpus` | number of virtual CPUs (positive integer; default `1`) |
 | `sandbox.memory` | guest memory size accepted by Quicksand (default `512M`) |
 | `sandbox.diskSize` | guest disk size accepted by Quicksand (default `10G`) |
 | `sandbox.enableDisplay` | enable the QEMU display, VNC endpoint, and host screenshot (default `false`; use with a desktop image) |
-| `sandbox.initScript` | bash file whose SHA-256 selects the saved image |
-| `sandbox.cacheDir` | directory containing content-addressed sandbox images |
+| `sandbox.initScript` | idempotent bash lifecycle script executed before every sandbox becomes ready |
+| `sandbox.cacheDir` | directory containing tagged sandbox images and runtime port files |
 | `sandbox.mounts` | additional host/guest directory mounts; relative host paths resolve from `config.jsonc` and are created automatically |
 | `sandbox.env` | default environment variables injected into every SSH-routed tool command |
 | `sandbox.portMapping` | list of non-SSH Quicksand forwards such as `{ "from": "Host(8080)", "to": "Guest(8080)" }`; SSH automatically uses the first free host port from `52222` |
@@ -144,11 +148,17 @@ versioned.
 The directory where `run_opencode` is invoked is always mounted at `/data` and
 used as the OpenCode workspace.
 
-During `init:sandbox`, the directory named `init` beside `sandbox.initScript`
-is mounted at `/mnt/init`. It is a host mount and is **not** persisted in the
-saved image; the script must copy anything it needs to retain onto the guest
-filesystem. Additional `sandbox.mounts` are also available but are likewise not
-persisted. Only the script bytes affect the image hash.
+Whenever the sandbox starts, the directory named `init` beside
+`sandbox.initScript` is mounted at `/mnt/init`. It is a host mount and is **not**
+persisted in the saved image; the script must copy anything it needs to retain
+onto the guest filesystem. Additional `sandbox.mounts` are likewise not
+persisted.
+
+The script receives `SANDBOX_LIFECYCLE=create` when the tagged image does not
+exist and `SANDBOX_LIFECYCLE=update` when it does, plus
+`SANDBOX_IMAGE_TYPE` and `SANDBOX_IMAGE_TAG`. It must support repeated `update`
+runs. A failed lifecycle keeps the previous valid image; a successful run is
+flattened and atomically replaces it.
 
 The default init script installs Podman with rootless dependencies and creates
 `podmanuser` with subordinate UID/GID ranges, lingering, and a persistent
