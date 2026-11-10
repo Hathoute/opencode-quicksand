@@ -1,0 +1,18 @@
+{
+  "port": 18080,
+  "host": "127.0.0.1",
+  "outputTransport": "streamableHttp",
+  "stateful": true,
+  "healthEndpoint": "/healthz",
+  "mcpServers": {
+    "gitlab": {
+      "command": "npx",
+      "args": ["-y", "@zereight/mcp-gitlab@2.1.61"],
+      "env": {
+        "GITLAB_API_URL": "https://gitlab.com",
+        "GITLAB_PERSONAL_ACCESS_TOKEN": "${GITLAB_PERSONAL_ACCESS_TOKEN:-}",
+        "GITLAB_READ_ONLY_MODE": "${GITLAB_READ_ONLY_MODE:-true}"
+      }
+    }
+  }
+}

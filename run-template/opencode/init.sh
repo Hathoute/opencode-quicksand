@@ -2,8 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$SCRIPT_DIR/.venv"
+set -a
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/.env"
+set +a
 
-if [[ ! -f "$VENV_DIR/pyvenv.cfg" ]]; then
-  uv venv "$VENV_DIR"
-fi
+npx -y supergateway@4.2.2 \
+  --config "$SCRIPT_DIR/mcp-gateway.json" \
+  --exitWithProcess "$$" \
+  </dev/null >>"$SCRIPT_DIR/mcp-gateway.log" 2>&1 &

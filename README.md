@@ -70,7 +70,7 @@ bun run init:sandbox
 # 1) apply init.sh, replace the tagged image, and start the VM
 bun run start:sandbox
 
-# 2) host OpenCode lifecycle (creates run/opencode/.venv once)
+# 2) host OpenCode lifecycle (starts the configured Supergateway)
 source run/opencode/init.sh
 
 # 3) opencode embedder on the configured opencode.port (first run: clone + bun install)
@@ -171,8 +171,11 @@ only `<sandbox.image>-<sandbox.imageTag>` remains in `sandbox.cacheDir`.
 `opencode.initScript` is sourced into a persistent host Bash after the sandbox
 is ready. The embedder starts only after that script succeeds. During shutdown,
 the launcher writes `exit` to the Bash and waits, allowing future MCP server
-cleanup registered with `trap ... EXIT` to run. The default script creates
-`run/opencode/.venv` with uv when it does not already exist.
+cleanup registered with `trap ... EXIT` to run. The default script starts
+`supergateway@4.2.2` from `run/opencode/mcp-gateway.json` after sourcing
+`run/opencode/.env`; the template exposes a GitLab MCP endpoint at
+`http://127.0.0.1:18080/gitlab/mcp`. The template `.env` contains no secrets;
+set `GITLAB_PERSONAL_ACCESS_TOKEN` in the ignored runtime copy before starting.
 
 The default init script installs Podman with rootless dependencies and creates
 `podmanuser` with subordinate UID/GID ranges, lingering, and a persistent

@@ -129,8 +129,10 @@ Also create the embedder's config directory with an `opencode.jsonc`:
 
 A tracked template for the runtime tree lives in `run-template/` (repository
 checkouts): copy it once and edit — `run/` is gitignored. Sandbox provisioning
-lives under `run/sandbox/`; the host OpenCode lifecycle and its persistent
-virtual environment live under `run/opencode/`.
+lives under `run/sandbox/`; the host OpenCode lifecycle, environment, and
+Supergateway configuration live under `run/opencode/`. Set
+`GITLAB_PERSONAL_ACCESS_TOKEN` in the ignored runtime `.env` before starting;
+the tracked template contains no secrets.
 
 ## 3. Run `sandbox-*`
 

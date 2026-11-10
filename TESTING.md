@@ -5,7 +5,7 @@ Three pieces run in this order — each in its **own terminal** so they stay ali
 ```
 [0] bun run init:sandbox    → optional update-only lifecycle run
 [1] bun run start:sandbox   → updates <sandbox.image>-<imageTag>, then exposes SSH and /data
-[2] source run/opencode/init.sh → host lifecycle and persistent Python venv
+[2] source run/opencode/init.sh → host lifecycle and Supergateway
 [3] bun run start:embed         → opencode embedder on config.jsonc's opencode.port
 [4] opencode run                → drives the agent; every Read/Write/Shell executes in the VM
 ```
@@ -98,9 +98,9 @@ bun run start:sandbox
   fail later as expected.
 - The default image includes rootless Podman for `podmanuser`; verify with
   `runuser -l podmanuser -c 'podman info'`
-- `start:opencode` prints `OpenCode init is ready` after creating
-  `run/opencode/.venv`; shutdown must print `Stopping OpenCode init shell
-  gracefully...` before closing the sandbox
+- `start:opencode` prints `OpenCode init is ready`; verify the gateway at
+  `http://127.0.0.1:18080/healthz`. Shutdown must print
+  `Stopping OpenCode init shell gracefully...` before closing the sandbox
 
 For the repository-default cache path, connect to the live display with
 TigerVNC's explicit-port syntax (two colons):
