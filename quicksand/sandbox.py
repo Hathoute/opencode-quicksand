@@ -20,6 +20,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from quicksand import Forward, Guest, Host, Mount, NetworkMode, Sandbox
@@ -335,8 +336,6 @@ KEY_PATH = _script_dir() / "ssh" / "quicksand_demo"
 IMAGE_NAME = f"{BASE_IMAGE}-{IMAGE_TAG}"
 IMAGE_PATH = CACHE_DIR / IMAGE_NAME
 IMAGE_PREVIOUS_PATH = CACHE_DIR / f".{IMAGE_NAME}.previous"
-IMAGE_UPDATE_NAME = f".{IMAGE_NAME}.update"
-IMAGE_UPDATE_PATH = CACHE_DIR / IMAGE_UPDATE_NAME
 IMAGE_NEXT_PATH = CACHE_DIR / f".{IMAGE_NAME}.next"
 SSH_PORT_PATH = CACHE_DIR / "ssh-port"
 VNC_PORT_PATH = CACHE_DIR / "vnc-port"
@@ -379,23 +378,21 @@ def _recover_interrupted_update() -> None:
     elif IMAGE_PREVIOUS_PATH.exists():
         print(f"Recovering interrupted image update: {IMAGE_NAME}")
         IMAGE_PREVIOUS_PATH.rename(IMAGE_PATH)
-    _remove_save(IMAGE_UPDATE_PATH)
     _remove_save(IMAGE_NEXT_PATH)
 
 
 def _prepare_image_source() -> tuple[str, str]:
     _recover_interrupted_update()
     if IMAGE_PATH.exists():
-        IMAGE_PATH.rename(IMAGE_PREVIOUS_PATH)
-        return str(IMAGE_PREVIOUS_PATH), "update"
+        return str(IMAGE_PATH), "update"
     return BASE_IMAGE, "create"
 
 
-def _install_updated_image(sb: Sandbox) -> None:
+def _build_updated_image(sb: Sandbox, update_path: Path) -> None:
     """Flatten the complete guest disk into a one-overlay replacement save."""
-    update_overlays = sorted((IMAGE_UPDATE_PATH / "overlays").glob("*.qcow2"))
+    update_overlays = sorted((update_path / "overlays").glob("*.qcow2"))
     if not update_overlays:
-        raise RuntimeError(f"updated image has no overlays: {IMAGE_UPDATE_PATH}")
+        raise RuntimeError(f"updated image has no overlays: {update_path}")
     if sb._image is None or sb._overlay_manager is None:  # type: ignore[attr-defined]
         raise RuntimeError("sandbox image runtime is unavailable")
 
@@ -427,12 +424,24 @@ def _install_updated_image(sb: Sandbox) -> None:
     if result.returncode != 0:
         raise RuntimeError(f"failed to flatten updated image: {result.stderr.strip()}")
 
-    shutil.copy2(IMAGE_UPDATE_PATH / "manifest.json", IMAGE_NEXT_PATH / "manifest.json")
+    shutil.copy2(update_path / "manifest.json", IMAGE_NEXT_PATH / "manifest.json")
     Sandbox.validate_save(IMAGE_NEXT_PATH)
-    if IMAGE_PATH.exists():
-        raise RuntimeError(f"image replacement target unexpectedly exists: {IMAGE_PATH}")
-    IMAGE_NEXT_PATH.rename(IMAGE_PATH)
-    Sandbox.validate_save(IMAGE_PATH)
+
+
+def _activate_updated_image() -> None:
+    """Swap the completed image into place after its provisioning VM stops."""
+    had_previous = IMAGE_PATH.exists()
+    if had_previous:
+        IMAGE_PATH.rename(IMAGE_PREVIOUS_PATH)
+    try:
+        IMAGE_NEXT_PATH.rename(IMAGE_PATH)
+        Sandbox.validate_save(IMAGE_PATH)
+    except Exception:
+        _remove_save(IMAGE_PATH)
+        if had_previous and IMAGE_PREVIOUS_PATH.exists():
+            IMAGE_PREVIOUS_PATH.rename(IMAGE_PATH)
+        raise
+    _remove_save(IMAGE_PREVIOUS_PATH)
 
 
 async def _run_init_script(sb: Sandbox, lifecycle: str) -> None:
@@ -456,47 +465,64 @@ async def _run_init_script(sb: Sandbox, lifecycle: str) -> None:
         raise RuntimeError(f"sandbox.initScript failed with exit code {result.exit_code}")
 
 
-async def run_sandbox(*, hold_open: bool) -> None:
-    pubkey = ensure_keypair() if hold_open else ""
-    ssh_host_port = _available_ssh_port() if hold_open else 0
-    if hold_open:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        SSH_PORT_PATH.write_text(f"{ssh_host_port}\n")
-        atexit.register(SSH_PORT_PATH.unlink, missing_ok=True)
-        VNC_PORT_PATH.unlink(missing_ok=True)
-        atexit.register(VNC_PORT_PATH.unlink, missing_ok=True)
-
+async def _provision_image() -> None:
     source_image, lifecycle = _prepare_image_source()
-    updated = False
     print(f"Sandbox image: {IMAGE_NAME} ({lifecycle} from {source_image})")
     print(f"Init mount: {INIT_MOUNT_DIR} -> /mnt/init (not persisted automatically)")
-    forwards = [Forward(Host(ssh_host_port), Guest(22)), *PORT_FORWARDS] if hold_open else []
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"opencode-quicksand-{IMAGE_NAME}-") as update_dir:
+            update_workspace = Path(update_dir)
+            update_name = "updated"
+            async with Sandbox(
+                image=source_image,
+                network_mode=NetworkMode.FULL,
+                cpus=CPUS,
+                memory=MEMORY,
+                disk_size=DISK_SIZE,
+                mounts=[
+                    Mount(str(INIT_MOUNT_DIR), "/mnt/init"),
+                    *CONFIGURED_MOUNTS,
+                ],
+            ) as sb:
+                await _run_init_script(sb, lifecycle)
+                print(f"Building updated sandbox image: {IMAGE_NAME}")
+                await sb.save(update_name, workspace=update_workspace)
+                _build_updated_image(sb, update_workspace / update_name)
+            _activate_updated_image()
+        print(f"Sandbox image updated: {IMAGE_NAME}")
+    finally:
+        _remove_save(IMAGE_NEXT_PATH)
+        if IMAGE_PATH.exists():
+            _remove_save(IMAGE_PREVIOUS_PATH)
+        elif IMAGE_PREVIOUS_PATH.exists() and not IMAGE_PATH.exists():
+            IMAGE_PREVIOUS_PATH.rename(IMAGE_PATH)
+
+
+async def run_sandbox(*, hold_open: bool) -> None:
+    await _provision_image()
+    if not hold_open:
+        return
+
+    pubkey = ensure_keypair()
+    ssh_host_port = _available_ssh_port()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    SSH_PORT_PATH.write_text(f"{ssh_host_port}\n")
+    atexit.register(SSH_PORT_PATH.unlink, missing_ok=True)
+    VNC_PORT_PATH.unlink(missing_ok=True)
+    atexit.register(VNC_PORT_PATH.unlink, missing_ok=True)
+    print(f"Starting runtime from sandbox image: {IMAGE_NAME}")
 
     try:
         async with Sandbox(
-            image=source_image,
+            image=str(IMAGE_PATH),
             network_mode=NetworkMode.FULL,
             cpus=CPUS,
             memory=MEMORY,
             disk_size=DISK_SIZE,
-            enable_display=ENABLE_DISPLAY if hold_open else False,
-            mounts=[
-                Mount(str(MOUNT_DIR), "/data"),
-                Mount(str(INIT_MOUNT_DIR), "/mnt/init"),
-                *CONFIGURED_MOUNTS,
-            ],
-            port_forwards=forwards,
+            enable_display=ENABLE_DISPLAY,
+            mounts=[Mount(str(MOUNT_DIR), "/data"), *CONFIGURED_MOUNTS],
+            port_forwards=[Forward(Host(ssh_host_port), Guest(22)), *PORT_FORWARDS],
         ) as sb:
-            await _run_init_script(sb, lifecycle)
-            print(f"Replacing sandbox image: {IMAGE_NAME}")
-            await sb.save(IMAGE_UPDATE_NAME, workspace=CACHE_DIR)
-            _install_updated_image(sb)
-            updated = True
-
-            if not hold_open:
-                print(f"Sandbox image updated: {IMAGE_NAME}")
-                return
-
             print(f"SSH keypair: {KEY_PATH} (+ .pub)")
             if sb.vnc_port is not None:
                 VNC_PORT_PATH.write_text(f"{sb.vnc_port}\n")
@@ -533,15 +559,8 @@ async def run_sandbox(*, hold_open: bool) -> None:
                 print("(non-interactive: holding sandbox open for 5 minutes)")
                 await asyncio.sleep(300)
     finally:
-        _remove_save(IMAGE_UPDATE_PATH)
-        _remove_save(IMAGE_NEXT_PATH)
-        if updated:
-            _remove_save(IMAGE_PREVIOUS_PATH)
-        elif IMAGE_PREVIOUS_PATH.exists() and not IMAGE_PATH.exists():
-            IMAGE_PREVIOUS_PATH.rename(IMAGE_PATH)
-        if hold_open:
-            SSH_PORT_PATH.unlink(missing_ok=True)
-            VNC_PORT_PATH.unlink(missing_ok=True)
+        SSH_PORT_PATH.unlink(missing_ok=True)
+        VNC_PORT_PATH.unlink(missing_ok=True)
 
 
 async def init_image():

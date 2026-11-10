@@ -38,6 +38,7 @@ export const loadRuntimeConfig = async (file: string) => {
     opencode: {
       configDir: resolve(base, string(opencode.configDir, "opencode.configDir")),
       cacheDir: resolve(base, string(opencode.cacheDir, "opencode.cacheDir")),
+      initScript: resolve(base, string(opencode.initScript, "opencode.initScript")),
       tag: string(opencode.tag, "opencode.tag"),
       port: port(opencode.port, "opencode.port"),
     },

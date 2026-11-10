@@ -13,9 +13,10 @@ session, config discovery, and the mounted `data/` directory stay on the host.
 |------|---------|
 | `config.jsonc` | runtime paths, OpenCode checkout tag/port, and sandbox initialization settings |
 | `bin/run_opencode` | PATH-friendly launcher; bootstraps per-user state and mounts the current directory |
-| `run-template/` | tracked template for the ignored runtime `run/` directory |
+| `run-template/sandbox/` | tracked guest image lifecycle (`init.sh` + its `init/` mount) |
+| `run-template/opencode/` | tracked host OpenCode lifecycle (`init.sh`; future MCP services) |
 | `opencode/` | opencode poc TypeScript sources: SSH workspace driver (`driver.ts` + per-platform adapters), embedder (`embed.ts`), streaming test (`stream-test.ts`) |
-| `quicksand/` | VM launcher, default `init.sh`, and runtime SSH keys |
+| `quicksand/` | VM launcher and runtime SSH keys |
 | `build/` | CI-friendly build/run scripts (`build/*.ts`), the pinned opencode checkout (`build/opencode`), compiled executables (`build/dist`) |
 | `pyproject.toml` + `uv.lock` | uv-managed Python tooling (quicksand, PyInstaller); interpreter pinned via `.python-version` |
 | `TESTING.md` | step-by-step verification workflows |
@@ -49,9 +50,10 @@ run_opencode
 ```
 
 On first use the launcher copies `config.jsonc` and `run-template/` to
-`~/.opencode-quicksand/`. Every start runs the init lifecycle, replaces the
-tagged image, starts the sandbox, and then starts the embedder. CTRL+C stops
-the embedder before closing the sandbox.
+`~/.opencode-quicksand/`. Every start runs the sandbox lifecycle, replaces the
+tagged image, starts a persistent host Bash from `opencode.initScript`, and then
+starts the embedder. CTRL+C stops the embedder, exits the OpenCode init Bash,
+and closes the sandbox.
 
 The individual repository scripts remain available for development:
 
@@ -68,10 +70,13 @@ bun run init:sandbox
 # 1) apply init.sh, replace the tagged image, and start the VM
 bun run start:sandbox
 
-# 2) opencode embedder on the configured opencode.port (first run: clone + bun install)
+# 2) host OpenCode lifecycle (creates run/opencode/.venv once)
+source run/opencode/init.sh
+
+# 3) opencode embedder on the configured opencode.port (first run: clone + bun install)
 bun run start:embed
 
-# 3) drive the configured model — every command runs inside the VM
+# 4) drive the configured model — every command runs inside the VM
 opencode run --server http://localhost:14096 --auto \
   "Run the shell command: hostname && uname -a && head -5 /data/README.md"
 ```
@@ -110,7 +115,7 @@ bun run build:all
 | Command | What it does |
 |---------|--------------|
 | `bun run init:sandbox` | runs the init lifecycle, atomically replaces `<sandbox.image>-<sandbox.imageTag>`, then exits |
-| `bun run start:opencode` | updates and starts the sandbox, waits for readiness, then starts the embedder; CTRL+C stops both in order |
+| `bun run start:opencode` | updates and starts the sandbox, runs the persistent OpenCode init shell, then starts the embedder; CTRL+C stops all three in reverse order |
 | `bun run start:sandbox` | starts from the tagged image or a fresh base, runs init, replaces the image, then holds the VM open |
 | `bun run start:embed` | fetches `opencode.tag`, syncs `opencode/*.ts` → `build/opencode/poc`, installs dependencies, and starts the embedder |
 | `bun run build:embed` | compiles `embed-<target>` for `EMBED_TARGET` (windows-x64, linux-x64, linux-arm64; default: host) |
@@ -131,6 +136,7 @@ versioned.
 |-----|---------|
 | `opencode.configDir` | directory containing OpenCode's `opencode.jsonc` |
 | `opencode.cacheDir` | persistent embedder state (`opencode.db`) |
+| `opencode.initScript` | host Bash lifecycle sourced before the embedder starts and exited during shutdown |
 | `opencode.tag` | Git tag, branch, or commit fetched for the pinned checkout |
 | `opencode.port` | embedder HTTP port |
 | `sandbox.image` | Quicksand base image type (defaults to `ubuntu`; its provider must be installed) |
@@ -158,7 +164,15 @@ The script receives `SANDBOX_LIFECYCLE=create` when the tagged image does not
 exist and `SANDBOX_LIFECYCLE=update` when it does, plus
 `SANDBOX_IMAGE_TYPE` and `SANDBOX_IMAGE_TAG`. It must support repeated `update`
 runs. A failed lifecycle keeps the previous valid image; a successful run is
-flattened and atomically replaces it.
+flattened and atomically replaces it. Provisioning stops before the swap, and
+all temporary update/previous images are removed before the runtime VM boots;
+only `<sandbox.image>-<sandbox.imageTag>` remains in `sandbox.cacheDir`.
+
+`opencode.initScript` is sourced into a persistent host Bash after the sandbox
+is ready. The embedder starts only after that script succeeds. During shutdown,
+the launcher writes `exit` to the Bash and waits, allowing future MCP server
+cleanup registered with `trap ... EXIT` to run. The default script creates
+`run/opencode/.venv` with uv when it does not already exist.
 
 The default init script installs Podman with rootless dependencies and creates
 `podmanuser` with subordinate UID/GID ranges, lingering, and a persistent

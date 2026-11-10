@@ -316,10 +316,12 @@ the persistent save as `<image>-<imageTag>`. If that save is absent, startup
 uses a fresh base image. Every start runs `sandbox.initScript`, with
 `SANDBOX_LIFECYCLE=create` or `update`, before exposing the VM.
 
-After a successful lifecycle run, the complete disk is flattened to one qcow2
-overlay and atomically replaces the tagged save. The old image remains available
-for recovery until the VM update succeeds. A failed or interrupted update is
-rolled back on the next start instead of leaving a partial image.
+After a successful lifecycle run, the provisioning VM stops, the complete disk
+is flattened to one qcow2 overlay, and it atomically replaces the tagged save.
+Temporary update/previous images are removed before a separate runtime VM boots,
+so only the final `<image>-<imageTag>` directory remains. A failed or interrupted
+update keeps or restores the previous valid image instead of leaving a partial
+save.
 
 The script's sibling `init/` directory is mounted at `/mnt/init` on every run.
 Quicksand excludes mounts from saves, so those files are not persisted unless

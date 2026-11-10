@@ -4,6 +4,7 @@
   "opencode": {
     "configDir": "./run/config",
     "cacheDir": "./run/cache",
+    "initScript": "./run/opencode/init.sh",
     "tag": "ced73dc0f6c5b00c3a085b1d7b11ea31f790c5df",
     "port": 14096
   },
@@ -14,7 +15,7 @@
     "memory": "512M",
     "diskSize": "10G",
     "enableDisplay": false,
-    "initScript": "./run/init.sh",
+    "initScript": "./run/sandbox/init.sh",
     "cacheDir": "./.quicksand/sandboxes",
     "mounts": [
       { "host": "./cache/.m2", "guest": "/root/.m2" }

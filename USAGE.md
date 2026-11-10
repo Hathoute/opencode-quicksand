@@ -72,6 +72,9 @@ relative to the config file itself (`~` is supported).
     "configDir": "./run/config",
     // Persistent embedder state (SQLite database).
     "cacheDir": "./run/cache",
+    // Host lifecycle sourced before embed startup; its Bash receives `exit`
+    // during graceful shutdown so EXIT traps can stop MCP servers.
+    "initScript": "./run/opencode/init.sh",
     // opencode commit the SOURCE build runs against. Required but unused by
     // the prebuilt embed binary.
     "tag": "ced73dc0f6c5b00c3a085b1d7b11ea31f790c5df",
@@ -89,7 +92,7 @@ relative to the config file itself (`~` is supported).
     // Idempotent guest lifecycle run before every start (apt installs etc.).
     // SANDBOX_LIFECYCLE is "create" or "update".
     // Keep it LF-ended; CRLF breaks bash on the guest.
-    "initScript": "./run/init.sh",
+    "initScript": "./run/sandbox/init.sh",
     // Image storage + the published ssh-port file.
     "cacheDir": "./.quicksand/sandboxes",
     // Extra host→guest mounts (CWD is always mounted at /data; reserved).
@@ -125,7 +128,9 @@ Also create the embedder's config directory with an `opencode.jsonc`:
 ```
 
 A tracked template for the runtime tree lives in `run-template/` (repository
-checkouts): copy it once and edit — `run/` is gitignored.
+checkouts): copy it once and edit — `run/` is gitignored. Sandbox provisioning
+lives under `run/sandbox/`; the host OpenCode lifecycle and its persistent
+virtual environment live under `run/opencode/`.
 
 ## 3. Run `sandbox-*`
 
@@ -151,7 +156,9 @@ What happens:
   `sandbox.mounts` and `sandbox.portMapping`, forwards guest SSH to the first
   free loopback port from 52222 (published to `sandbox.cacheDir/ssh-port`)
 - runs `initScript` with `SANDBOX_LIFECYCLE=create|update`, then atomically
-  replaces `<sandbox.image>-<sandbox.imageTag>` before reporting readiness
+  replaces `<sandbox.image>-<sandbox.imageTag>` before reporting readiness;
+  provisioning and runtime are separate boots, and only the final image remains
+  in `sandbox.cacheDir`
 - prints `Sandbox is ready` when SSH answers
 
 Stop it with **Enter** in a console; when stdin is closed (background/CI) it

@@ -5,13 +5,16 @@ Three pieces run in this order — each in its **own terminal** so they stay ali
 ```
 [0] bun run init:sandbox    → optional update-only lifecycle run
 [1] bun run start:sandbox   → updates <sandbox.image>-<imageTag>, then exposes SSH and /data
-[2] bun run start:embed     → opencode embedder on config.jsonc's opencode.port
-[3] opencode run            → drives the agent; every Read/Write/Shell executes in the VM
+[2] source run/opencode/init.sh → host lifecycle and persistent Python venv
+[3] bun run start:embed         → opencode embedder on config.jsonc's opencode.port
+[4] opencode run                → drives the agent; every Read/Write/Shell executes in the VM
 ```
 
-Steps 1–2 can instead share one terminal via `bun run start:opencode`. The
-launcher applies the image lifecycle, waits for sandbox readiness, and on
-CTRL+C stops the embedder before closing the sandbox gracefully.
+Steps 1–3 can instead share one terminal via `bun run start:opencode`. The
+launcher applies the image lifecycle, waits for sandbox readiness, sources
+`opencode.initScript` in a persistent host Bash, and starts the embedder. On
+CTRL+C it stops the embedder, writes `exit` to that Bash, then closes the
+sandbox gracefully.
 
 ## Host platform support
 
@@ -71,7 +74,9 @@ bun run start:sandbox
   exists, or starts from a fresh `sandbox.image` otherwise
 - Before readiness, it runs `sandbox.initScript` with
   `SANDBOX_LIFECYCLE=create|update`, flattens the resulting disk, and atomically
-  replaces the tagged image. The script must be idempotent
+  replaces the tagged image. The provisioning VM stops before the runtime VM
+  starts, and the cache must then contain only the final tagged image (no
+  `.previous`, `.update`, or `.next`). The script must be idempotent
 - While the script runs, its sibling `init/` directory is mounted at
   `/mnt/init`. Mount contents are not part of the saved image; the script must
   copy required files to the guest filesystem
@@ -93,6 +98,9 @@ bun run start:sandbox
   fail later as expected.
 - The default image includes rootless Podman for `podmanuser`; verify with
   `runuser -l podmanuser -c 'podman info'`
+- `start:opencode` prints `OpenCode init is ready` after creating
+  `run/opencode/.venv`; shutdown must print `Stopping OpenCode init shell
+  gracefully...` before closing the sandbox
 
 For the repository-default cache path, connect to the live display with
 TigerVNC's explicit-port syntax (two colons):
@@ -269,6 +277,7 @@ bun run build:all
 | Symptom | Cause / fix |
 |---------|-------------|
 | `sandbox.initScript does not exist` | fix the path in `config.jsonc`; relative paths resolve from the config file |
+| `opencode.initScript does not exist` | create it from `run-template/opencode/init.sh` or fix its config path |
 | `sandbox init mount does not exist` | create an `init/` directory beside `sandbox.initScript` |
 | `Image not found: ...` | install the provider selected by `sandbox.image`; a missing tagged save is created automatically |
 | `Host key verification failed` on the first manual `ssh` (under `BatchMode`) | fresh host: no known_hosts entry yet — add `-o StrictHostKeyChecking=accept-new` (as in the step 1 verify) |
