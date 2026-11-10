@@ -410,10 +410,6 @@ def _build_updated_image(sb: Sandbox, update_path: Path) -> None:
             "-O",
             "qcow2",
             "-c",
-            "-B",
-            str(base_image),
-            "-F",
-            "qcow2",
             str(update_overlays[-1]),
             str(next_overlays / "0.qcow2"),
         ],
@@ -423,6 +419,24 @@ def _build_updated_image(sb: Sandbox, update_path: Path) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(f"failed to flatten updated image: {result.stderr.strip()}")
+    result = subprocess.run(
+        [
+            str(qemu_img),
+            "rebase",
+            "-f",
+            "qcow2",
+            "-b",
+            str(base_image),
+            "-F",
+            "qcow2",
+            str(next_overlays / "0.qcow2"),
+        ],
+        capture_output=True,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"failed to rebase updated image safely: {result.stderr.strip()}")
 
     shutil.copy2(update_path / "manifest.json", IMAGE_NEXT_PATH / "manifest.json")
     Sandbox.validate_save(IMAGE_NEXT_PATH)

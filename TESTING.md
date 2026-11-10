@@ -280,6 +280,7 @@ bun run build:all
 | `opencode.initScript does not exist` | create it from `run-template/opencode/init.sh` or fix its config path |
 | `sandbox init mount does not exist` | create an `init/` directory beside `sandbox.initScript` |
 | `Image not found: ...` | install the provider selected by `sandbox.image`; a missing tagged save is created automatically |
+| `sudo: you do not exist in the passwd database` while mounting CIFS | image was flattened by the old direct-`-B` path and may contain zeroed identity files; update the launcher, delete that tagged save, and rebuild it from the same tag |
 | `Host key verification failed` on the first manual `ssh` (under `BatchMode`) | fresh host: no known_hosts entry yet — add `-o StrictHostKeyChecking=accept-new` (as in the step 1 verify) |
 | Every driver call logs `Warning: Permanently added '[localhost]:<host-port>'`; embedder logged `ssh-keyscan got no host key` | IPv6-first `localhost` + forward bound to 127.0.0.1 (FINDINGS.md #13); fixed in `embed.ts` — resync + restart the embedder with the sandbox up |
 | Manual `ssh` fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | the VM generates fresh host keys every boot — read `ssh-port` under `sandbox.cacheDir`, then clear it with `ssh-keygen -R "[127.0.0.1]:<host-port>"` (the driver re-pins `quicksand/ssh/known_hosts` each boot) |

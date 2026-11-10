@@ -323,6 +323,11 @@ so only the final `<image>-<imageTag>` directory remains. A failed or interrupte
 update keeps or restores the previous valid image instead of leaving a partial
 save.
 
+Flattening first converts the full chain to a standalone qcow2, then performs a
+safe rebase onto the packaged base image. A direct `qemu-img convert -B <base>`
+lost backing-chain data after a large apt transaction and produced a saved
+`/etc/passwd` full of NUL bytes (`sudo: you do not exist in the passwd database`).
+
 The script's sibling `init/` directory is mounted at `/mnt/init` on every run.
 Quicksand excludes mounts from saves, so those files are not persisted unless
 the script copies them into the guest filesystem. Lifecycle scripts must be
