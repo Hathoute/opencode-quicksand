@@ -34,9 +34,11 @@ embed-windows-x64.exe     embed-linux-x64     embed-linux-arm64     embed-macos-
 sandbox-windows-x64.zip   sandbox-linux-x64.zip sandbox-linux-arm64.zip sandbox-macos-arm64.zip
 ```
 
-The sandbox ships as a **directory in a zip** (interpreter + Ubuntu image +
-QEMU binaries — nothing is extracted to `%TEMP%` at runtime, so it also works
-on machines whose policy blocks executing from temp, WinError 1260). Pick the
+The sandbox ships as a **directory in a zip** (interpreter + QEMU binaries —
+nothing is extracted to `%TEMP%` at runtime, so it also works on machines
+whose policy blocks executing from temp, WinError 1260). The VM base image is
+**not** included: `config.jsonc` points at one via `sandbox.image` (a qcow2
+path, or a provider name whose fat wheel is installed — see §2). Pick the
 pair matching your platform, extract the zip anywhere.
 
 ### Option B — build from source

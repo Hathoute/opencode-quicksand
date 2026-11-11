@@ -100,15 +100,17 @@ bun run build:all
   pty binary of the *target* platform is force-installed and embedded via the
   same plugin upstream uses. Reads `config.jsonc` from its start directory by
   default; pass `--config <file>` to use another file.
-- `sandbox-*` (~330 MB folder, shipped as a zip): PyInstaller **onedir** with
-  interpreter + deps + Ubuntu image + QEMU binaries, built in the uv-managed
-  `build` dependency-group. PyInstaller cannot cross-compile — build on the
-  target platform (CI does). Reads `config.jsonc` from its start directory by
-  default; pass `--config <file>`. Every normal run updates the tagged image;
-  `--init` performs the same update and exits instead of holding the VM open.
-  The VM mounts the current working directory at `/data`. Nothing extracts to
-  the temp dir at runtime (onedir executes in place, so machines whose policy
-  blocks executing from `%TEMP%` — WinError 1260 — work too).
+- `sandbox-*` (slim folder + zip): PyInstaller **onedir** with interpreter +
+  deps + QEMU binaries, built in the uv-managed `build` dependency-group. The
+  VM base image is **not** bundled — provide it via `sandbox.image` (a qcow2
+  path, or a provider name whose fat wheel is installed; see config table).
+  PyInstaller cannot cross-compile — build on the target platform (CI does).
+  Reads `config.jsonc` from its start directory by default; pass `--config
+  <file>`. Every normal run updates the tagged image; `--init` performs the
+  same update and exits instead of holding the VM open. The VM mounts the
+  current working directory at `/data`. Nothing extracts to the temp dir at
+  runtime (onedir executes in place, so machines whose policy blocks
+  executing from `%TEMP%` — WinError 1260 — work too).
 
 ## Scripts
 
