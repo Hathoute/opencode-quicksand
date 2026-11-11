@@ -7,6 +7,9 @@
 - executes sandbox.initScript on every start and atomically replaces the saved image
 - NetworkMode.FULL (internet access)
 - mounts the launcher's current working directory at /data in the VM
+- serves a FastAPI API on 127.0.0.1:<sandbox.apiPort> (/api/capabilities
+  reports kernel/image/display; /api/screenshot saves a PNG under
+  <sandbox.tmpDir>/screenshots; command execution stays on SSH)
 - configured non-SSH forwards plus guest SSH on the first free host port from 52222
 - generates ./ssh/quicksand_demo next to the script (next to the exe when
   frozen) and injects the pubkey into the VM so opencode's ssh driver can
@@ -17,6 +20,7 @@ import argparse
 import atexit
 import asyncio
 import json
+import os
 import re
 import shlex
 import shutil
@@ -24,8 +28,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
+import uvicorn
 from quicksand import Forward, Guest, Host, Mount, NetworkMode, Sandbox
 
 
@@ -125,6 +131,8 @@ def _load_config(
     str,
     str,
     Path,
+    int,
+    Path,
     Path,
     list[tuple[str, int, str, int]],
     list[tuple[Path, str]],
@@ -140,6 +148,8 @@ def _load_config(
         sandbox = config["sandbox"]
         image = sandbox.get("image", "ubuntu")
         image_tag = sandbox.get("imageTag", "default")
+        tmp_dir = sandbox.get("tmpDir", "./.quicksand/tmp")
+        api_port = sandbox.get("apiPort", 15222)
         cpus = sandbox.get("cpus", 1)
         memory = sandbox.get("memory", "512M")
         disk_size = sandbox.get("diskSize", "10G")
@@ -170,12 +180,17 @@ def _load_config(
         raise ValueError("sandbox.initScript must be a non-empty string")
     if not isinstance(cache_dir, str) or not cache_dir.strip():
         raise ValueError("sandbox.cacheDir must be a non-empty string")
+    if not isinstance(tmp_dir, str) or not tmp_dir.strip():
+        raise ValueError("sandbox.tmpDir must be a non-empty string")
+    _validate_port(api_port, "sandbox.apiPort")
     mappings = _parse_port_mappings(port_mapping)
     mounts = _parse_mounts(mount_config, file.parent)
     _validate_environment(environment)
     return (
         image,
         image_tag,
+        _resolve(file.parent, tmp_dir),
+        api_port,
         _resolve(file.parent, init_script),
         _resolve(file.parent, cache_dir),
         mappings,
@@ -382,6 +397,8 @@ CONFIG_FILE = Path(ARGS.config).expanduser().resolve()
 (
     IMAGE_SETTING,
     IMAGE_TAG,
+    TMP_DIR,
+    API_PORT,
     INIT_SCRIPT,
     CACHE_DIR,
     PORT_MAPPINGS,
@@ -392,6 +409,8 @@ CONFIG_FILE = Path(ARGS.config).expanduser().resolve()
     ENABLE_DISPLAY,
 ) = _load_config(CONFIG_FILE)
 MOUNT_DIR = Path.cwd().resolve()
+SCREENSHOT_DIR = TMP_DIR / "screenshots"
+API_HOST = "127.0.0.1"
 INIT_SCRIPT = _validate_init_script(INIT_SCRIPT)
 INIT_MOUNT_DIR = INIT_SCRIPT.parent / "init"
 if not INIT_MOUNT_DIR.is_dir():
@@ -578,6 +597,71 @@ async def _provision_image() -> None:
             IMAGE_PREVIOUS_PATH.rename(IMAGE_PATH)
 
 
+def _build_api_app(sb: Sandbox):
+    """FastAPI surface over the live Sandbox: capabilities and screenshot.
+
+    Command execution intentionally stays on the SSH channel (opencode's ssh
+    workspace driver): a streaming /api/exec needs stdin endpoints because
+    opencode's shell-tool stdin stream has no end marker, which deadlocks any
+    inline-stdin request design. Revisit only if the API driver returns.
+    """
+    from fastapi import FastAPI, HTTPException
+
+    app = FastAPI(title="opencode-quicksand sandbox", docs_url=None, redoc_url=None)
+    static_info: dict[str, str] = {}
+
+    async def _static_info() -> dict[str, str]:
+        if not static_info:
+            kernel = await sb.execute("uname -r")
+            pretty = await sb.execute('. /etc/os-release && printf "%s" "$PRETTY_NAME"')
+            static_info["kernel"] = kernel.stdout.strip()
+            static_info["image"] = pretty.stdout.strip() or BASE_IMAGE
+        return static_info
+
+    @app.get("/api/capabilities")
+    async def capabilities() -> dict:
+        info = await _static_info()
+        return {
+            "kernel": info["kernel"],
+            "image": info["image"],
+            "imageTag": IMAGE_TAG,
+            "display": {
+                "enabled": ENABLE_DISPLAY,
+                "active": sb.vnc_port is not None,
+                "vncPort": sb.vnc_port,
+            },
+        }
+
+    @app.get("/api/capabilities")
+    async def capabilities() -> dict:
+        info = await _static_info()
+        return {
+            "kernel": info["kernel"],
+            "image": info["image"],
+            "imageTag": IMAGE_TAG,
+            "display": {
+                "enabled": ENABLE_DISPLAY,
+                "active": sb.vnc_port is not None,
+                "vncPort": sb.vnc_port,
+            },
+        }
+
+    @app.post("/api/screenshot")
+    async def screenshot() -> dict:
+        if sb.vnc_port is None:
+            raise HTTPException(
+                status_code=409,
+                detail="display is not active — set sandbox.enableDisplay to true",
+            )
+        stamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+        path = SCREENSHOT_DIR / f"{IMAGE_NAME}-{stamp}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await sb.screenshot(path)
+        return {"path": path.as_posix()}
+
+    return app
+
+
 async def run_sandbox(*, hold_open: bool) -> None:
     await _provision_image()
     if not hold_open:
@@ -592,6 +676,7 @@ async def run_sandbox(*, hold_open: bool) -> None:
     atexit.register(VNC_PORT_PATH.unlink, missing_ok=True)
     print(f"Starting runtime from sandbox image: {IMAGE_NAME}")
 
+    api_server = None
     try:
         async with Sandbox(
             image=str(IMAGE_PATH),
@@ -621,8 +706,19 @@ async def run_sandbox(*, hold_open: bool) -> None:
                 timeout=30,
             )
 
+            api_server = uvicorn.Server(
+                uvicorn.Config(
+                    _build_api_app(sb),
+                    host=API_HOST,
+                    port=API_PORT,
+                    log_level="warning",
+                )
+            )
+            api_task = asyncio.create_task(api_server.serve())
+
             print()
             print("Sandbox is ready:")
+            print(f"  API:        http://{API_HOST}:{API_PORT} (/api/capabilities, /api/screenshot)")
             print(f"  SSH (key):  ssh -i {KEY_PATH} -p {ssh_host_port} root@127.0.0.1")
             print(f"  SSH (pw):   ssh -p {ssh_host_port} root@127.0.0.1          (password: root)")
             print(f"  Mount:      host {MOUNT_DIR} -> guest /data")
@@ -636,9 +732,12 @@ async def run_sandbox(*, hold_open: bool) -> None:
             try:
                 await asyncio.to_thread(input, "Press Enter to stop the sandbox...")
             except EOFError:
-                print("(non-interactive: holding sandbox open for 5 minutes)")
-                await asyncio.sleep(300)
+                hold_seconds = int(os.environ.get("SANDBOX_HOLD_SECONDS", "300"))
+                print(f"(non-interactive: holding sandbox open for {hold_seconds} seconds)")
+                await asyncio.sleep(hold_seconds)
     finally:
+        if api_server is not None:
+            api_server.should_exit = True
         SSH_PORT_PATH.unlink(missing_ok=True)
         VNC_PORT_PATH.unlink(missing_ok=True)
 

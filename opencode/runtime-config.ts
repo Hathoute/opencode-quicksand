@@ -45,6 +45,8 @@ export const loadRuntimeConfig = async (file: string) => {
     sandbox: {
       image: string(sandbox.image ?? "ubuntu", "sandbox.image"),
       imageTag: imageTag(sandbox.imageTag ?? "default", "sandbox.imageTag"),
+      tmpDir: resolve(base, string(sandbox.tmpDir ?? "./.quicksand/tmp")),
+      apiPort: port(sandbox.apiPort ?? 15222, "sandbox.apiPort"),
       cpus: positiveInteger(sandbox.cpus ?? 1, "sandbox.cpus"),
       memory: string(sandbox.memory ?? "512M", "sandbox.memory"),
       diskSize: string(sandbox.diskSize ?? "10G", "sandbox.diskSize"),

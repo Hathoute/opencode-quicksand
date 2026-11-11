@@ -10,6 +10,9 @@ dependencies = [
     # the quicksand simple index). uv-created environments ship WITHOUT pip,
     # so keep it installed explicitly or the auto-install breaks.
     "pip",
+    # sandbox API server (/api/exec, /api/capabilities, /api/screenshot)
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [dependency-groups]

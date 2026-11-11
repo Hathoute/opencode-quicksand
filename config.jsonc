@@ -13,6 +13,11 @@
     // required) — see README. The saved image is <name-or-stem>-<imageTag>.
     "image": "ubuntu",
     "imageTag": "default",
+    // Scratch directory on the host; screenshots land in ${tmpDir}/screenshots.
+    "tmpDir": "./.quicksand/tmp",
+    // Port of the sandbox API server (127.0.0.1 only): /api/exec,
+    // /api/capabilities, /api/screenshot.
+    "apiPort": 15222,
     "cpus": 1,
     "memory": "512M",
     "diskSize": "10G",

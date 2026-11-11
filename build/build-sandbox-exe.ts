@@ -117,7 +117,7 @@ if (qemuBinCount < 1)
   )
 console.log(`warmed quicksand_qemu: ${qemuBinCount} qemu binaries, ${(qemuBytes / 1024 / 1024).toFixed(1)} MB on disk`)
 
-await $`uv run --no-sync --project ${PROJECT_ROOT} pyinstaller --noconfirm --onedir --name sandbox --distpath ${DIST_DIR} --workpath ${path.join(DIST_DIR, "pyinstaller-work")} --specpath ${SANDBOX_DIR} --collect-all quicksand --collect-all quicksand_core --collect-all quicksand_qemu --collect-all quicksand_smb --copy-metadata quick-sandbox --copy-metadata quicksand-core --copy-metadata quicksand-qemu --copy-metadata quicksand-smb ${path.join(SANDBOX_DIR, "sandbox.py")}`
+await $`uv run --no-sync --project ${PROJECT_ROOT} pyinstaller --noconfirm --onedir --name sandbox --distpath ${DIST_DIR} --workpath ${path.join(DIST_DIR, "pyinstaller-work")} --specpath ${SANDBOX_DIR} --collect-all quicksand --collect-all quicksand_core --collect-all quicksand_qemu --collect-all quicksand_smb --collect-all fastapi --collect-all uvicorn --copy-metadata quick-sandbox --copy-metadata quicksand-core --copy-metadata quicksand-qemu --copy-metadata quicksand-smb ${path.join(SANDBOX_DIR, "sandbox.py")}`
 
 // --onedir over --onefile: a onefile exe extracts itself (and every bundled
 // QEMU binary/DLL) into %TEMP% before executing them, which corporate policy
