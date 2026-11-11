@@ -83,7 +83,12 @@ relative to the config file itself (`~` is supported).
   },
   // ── sandbox VM ───────────────────────────────────────────────────────
   "sandbox": {
-    "image": "ubuntu",        // base image
+    // Base image: provider name (ubuntu, alpine, ubuntu-desktop, ... — its fat
+    // wheel must be installed) or a PATH to a base *.qcow2 with sibling
+    // *.kernel/*.initrd files, e.g. extracted from a fat wheel downloaded at
+    // https://microsoft.github.io/quicksand/simple/. The saved image is named
+    // <provider-or-file-stem>-<imageTag>.
+    "image": "ubuntu",
     "imageTag": "default",    // saved as ubuntu-default
     "cpus": 1,
     "memory": "512M",

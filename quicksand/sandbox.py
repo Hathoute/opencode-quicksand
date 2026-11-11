@@ -1,5 +1,8 @@
 """Quicksand sandbox demo:
-- persists sandbox.image as <image>-<imageTag>
+- persists sandbox.image as <image>-<imageTag>; sandbox.image is a provider
+  name ("ubuntu", "alpine", ...) OR a path to a base *.qcow2 with sibling
+  *.kernel/*.initrd files (the layout an extracted quicksand fat wheel has) —
+  the file's stem becomes the image label ("ubuntu-24.04-amd64-default")
 - starts from that saved image when present, or a fresh base image otherwise
 - executes sandbox.initScript on every start and atomically replaces the saved image
 - NetworkMode.FULL (internet access)
@@ -53,6 +56,67 @@ def _script_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent
+
+
+# Base qcow2 files registered from a path-shaped sandbox.image (see
+# _register_image_file), keyed by the image label used in save names.
+_PATH_PROVIDERS: dict[str, Path] = {}
+
+
+def _register_image_file(image_value: str, base: Path) -> str:
+    """Accept a provider name or a base qcow2 path in sandbox.image.
+
+    A value containing a path separator or ending in .qcow2 is treated as a
+    path (relative paths resolve against the config file). The sibling
+    <stem>.kernel / <stem>.initrd files are required — the same layout the
+    quicksand fat wheels extract. Returns the image label used in save names:
+    the provider name itself, or the file's stem ("ubuntu-24.04-amd64").
+    """
+    is_path = ("/" in image_value) or ("\\" in image_value) or image_value.lower().endswith(".qcow2")
+    if not is_path:
+        return image_value
+    path = _resolve(base, image_value)
+    if not path.is_file():
+        raise FileNotFoundError(f"sandbox.image path does not exist: {path}")
+    kernel = path.with_suffix(".kernel")
+    initrd = path.with_suffix(".initrd")
+    if not kernel.is_file() or not initrd.is_file():
+        raise FileNotFoundError(
+            f"base image boot files not found next to {path}: "
+            f"expected {kernel.name} and {initrd.name} beside the qcow2"
+        )
+    _PATH_PROVIDERS[path.stem] = path
+    return path.stem
+
+
+def patch_path_based_images() -> None:
+    """Serve config-supplied qcow2 files as a quicksand.images provider.
+
+    ImageResolver looks base images up by name through the quicksand.images
+    entry points (provider packages). Registering the config-supplied qcow2
+    under its file stem makes both direct provisioning and later boots of
+    derived saves work — a save's manifest records its parent image name,
+    which is resolved through the same lookup on every boot. Such a save only
+    boots where the config points at the same qcow2 file: the file replaces
+    the provider package.
+    """
+    from quicksand_core.qemu import image_resolver
+
+    original = image_resolver.ImageResolver._resolve_base_by_name
+
+    def _resolve_base_by_name(name: str, *, arch=None):
+        result = original(name, arch=arch)
+        if result is None and name in _PATH_PROVIDERS:
+            path = _PATH_PROVIDERS[name]
+            return image_resolver.ResolvedImage(
+                name=name,
+                chain=[path],
+                kernel=path.with_suffix(".kernel"),
+                initrd=path.with_suffix(".initrd"),
+            )
+        return result
+
+    image_resolver.ImageResolver._resolve_base_by_name = staticmethod(_resolve_base_by_name)
 
 
 def _load_config(
@@ -316,7 +380,7 @@ def patch_frozen_qemu():
 ARGS = _arguments()
 CONFIG_FILE = Path(ARGS.config).expanduser().resolve()
 (
-    BASE_IMAGE,
+    IMAGE_SETTING,
     IMAGE_TAG,
     INIT_SCRIPT,
     CACHE_DIR,
@@ -333,6 +397,8 @@ INIT_MOUNT_DIR = INIT_SCRIPT.parent / "init"
 if not INIT_MOUNT_DIR.is_dir():
     raise FileNotFoundError(f"sandbox init mount does not exist or is not a directory: {INIT_MOUNT_DIR}")
 KEY_PATH = _script_dir() / "ssh" / "quicksand_demo"
+BASE_IMAGE = _register_image_file(IMAGE_SETTING, CONFIG_FILE.parent)
+patch_path_based_images()
 IMAGE_NAME = f"{BASE_IMAGE}-{IMAGE_TAG}"
 IMAGE_PATH = CACHE_DIR / IMAGE_NAME
 IMAGE_PREVIOUS_PATH = CACHE_DIR / f".{IMAGE_NAME}.previous"

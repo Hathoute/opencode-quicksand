@@ -139,8 +139,8 @@ versioned.
 | `opencode.initScript` | host Bash lifecycle sourced before the embedder starts and exited during shutdown |
 | `opencode.tag` | Git tag, branch, or commit fetched for the pinned checkout |
 | `opencode.port` | embedder HTTP port |
-| `sandbox.image` | Quicksand base image type (defaults to `ubuntu`; its provider must be installed) |
-| `sandbox.imageTag` | persistent image tag; the save is `<sandbox.image>-<sandbox.imageTag>` (default `default`) |
+| `sandbox.image` | Quicksand base image provider name (`ubuntu`, `alpine`, `ubuntu-desktop`, …; provider must be installed) **or a path to a base `*.qcow2`** with sibling `*.kernel`/`*.initrd` files — the layout of a fat wheel extracted from [quicksand's simple index](https://microsoft.github.io/quicksand/simple/). Relative paths resolve against `config.jsonc`; the file stem becomes the image label |
+| `sandbox.imageTag` | persistent image tag; the save is `<image name>-<sandbox.imageTag>` (default `default`) — provider form `ubuntu-default`, path form `ubuntu-24.04-amd64-default` |
 | `sandbox.cpus` | number of virtual CPUs (positive integer; default `1`) |
 | `sandbox.memory` | guest memory size accepted by Quicksand (default `512M`) |
 | `sandbox.diskSize` | guest disk size accepted by Quicksand (default `10G`) |

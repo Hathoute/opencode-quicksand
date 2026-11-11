@@ -10,3 +10,5 @@ quicksand/data
 quicksand/ssh
 
 *.log
+
+out/

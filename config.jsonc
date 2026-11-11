@@ -9,6 +9,8 @@
     "port": 14096
   },
   "sandbox": {
+    // Provider name or a path to a base *.qcow2 (sibling *.kernel/*.initrd
+    // required) — see README. The saved image is <name-or-stem>-<imageTag>.
     "image": "ubuntu",
     "imageTag": "default",
     "cpus": 1,
